@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import QObject, Signal
 
 from .config import Config
-from .memory import Memory
+from .database import Memory
 
 AWAKE, SLEEPING, HURT, HAPPY, LISTENING = "awake", "sleeping", "hurt", "happy", "listening"
 APOLOGY_WORDS = ("sorry", "apologize", "apologise", "my bad", "forgive me", "samawenna", "samaawenna",

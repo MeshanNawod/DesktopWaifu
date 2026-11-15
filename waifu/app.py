@@ -12,12 +12,12 @@ from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from . import vision
-from .brain import Brain
+from .gemini_brain import Brain
 from .camera import CameraWatcher
-from .character import CharacterWindow
+from .waifu_core import CharacterWindow
 from .config import Config
 from .emotion import AWAKE, HAPPY, HURT, LISTENING, SLEEPING, EmotionEngine
-from .memory import Memory
+from .database import Memory
 from .music import MusicListener, now_playing
 from .reactions import line
 from .sprites import default_vrm, list_characters

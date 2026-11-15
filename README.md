@@ -75,13 +75,15 @@ Each **mood** (Happy, Shy, Flustered, Sleepy, Upset, Playful, Neutral) weights w
 ## Project structure
 
 ```
-main.py                    entry point (the "waifu_core" is waifu/app.py + waifu/character.py)
+main.py                    entry point
+waifu/waifu_core.py        transparent overlay window: physics, walking, limb lifting + struggling, hit-testing
+waifu/gestures.py          gesture listener: click / hold / double-click / stroke / lift
+waifu/gemini_brain.py      google-genai chat, vision, audio, STT, fact extraction, retries + model fallback
+waifu/database.py          SQLite memory: %APPDATA%\DesktopWaifu\waifu_memory.db
+waifu/local_ai.py          optional offline brain via Ollama
 waifu/app.py               controller: wires everything, menus, tray, life loop (sleep, initiative, music)
-waifu/character.py         transparent overlay window, physics, touch hit-testing + gentle/rough gestures
-waifu/emotion.py           state machine (awake/sleeping/hurt/happy/listening) + mood labels + affection
+waifu/emotion.py           state machine (awake/sleeping/hurt/happy/listening) + moods incl. struggling + affection
 waifu/expressions.py       64-expression matrix and micro-expression engine
-waifu/brain.py             "gemini_brain": google-genai chat, vision, audio, STT, fact extraction, model fallback
-waifu/memory.py            "database": SQLite %APPDATA%\DesktopWaifu\waifu_memory.db
 waifu/camera.py, music.py, vision.py, voice.py     senses (webcam, music loopback, screen, mic/TTS)
 waifu/vrm/ , waifu/fbx/    3D loaders + OpenGL renderer;  vrm_character.py / mesh_character.py
 waifu/live_image.py, sprites.py                     2D characters

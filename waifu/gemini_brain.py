@@ -10,7 +10,7 @@ from typing import Callable
 from PySide6.QtCore import QObject, Signal
 
 from .config import EMOTIONS, Config
-from .memory import Memory
+from .database import Memory
 from .workers import run_async
 
 log = logging.getLogger(__name__)

@@ -414,8 +414,9 @@ class CharacterWindow(QWidget):
         self.ctx.struggle = 0.35
         if limb:
             # hold her from near the top of the window so her body can hang below the grabbed limb
-            side = 0.1 if limb.endswith("_l") else -0.1
-            pin = QPointF(self.width() * (0.5 + side), self.height() * 0.07)
+            # keep the grabbed limb on the side it was on, so her body hangs centred in the window
+            cx = self.width() / 2
+            pin = QPointF(cx + (self._press_local.x() - cx) * 0.6, self.height() * 0.07)
             self._grab_offset = pin
             self.ctx.grab_pt = (pin.x(), pin.y())
             target = self._press_global - pin
