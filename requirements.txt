@@ -1,0 +1,22 @@
+# --- Core ---
+PySide6>=6.7          # Qt overlay windows, multimedia playback, tray icon
+google-genai>=1.20    # Gemini SDK (from google import genai)
+
+# --- Vision ---
+mss>=9.0              # fast, thread-safe screenshots
+Pillow>=10.0          # resize/encode screenshots to JPEG
+
+# --- 3D VRM character ---
+PyOpenGL>=3.1.7       # OpenGL calls for the offscreen VRM renderer
+
+# --- Live picture character ---
+opencv-python-headless>=4.9,<5   # image warping + webcam + face detection (5.x dropped Haar cascades)
+
+# --- Music listening ---
+soundcard>=0.4.3      # WASAPI loopback: hear what your PC is playing
+
+# --- Voice ---
+edge-tts>=7.0         # free neural TTS voices (needs internet)
+sounddevice>=0.4.6    # microphone capture (PortAudio wheels bundled on Windows)
+numpy>=1.26
+pyttsx3>=2.90         # offline fallback TTS (Windows SAPI5)

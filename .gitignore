@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Local data (settings incl. API key, memories, caches live in %APPDATA%\DesktopWaifu, never in the repo)
+*.db
+*.log
+.env
+config.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
