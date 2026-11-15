@@ -15,6 +15,7 @@ from . import vision
 from .gemini_brain import Brain
 from .camera import CameraWatcher
 from .waifu_core import CharacterWindow
+from .attention import AttentionEngine
 from .config import Config
 from .emotion import AWAKE, HAPPY, HURT, LISTENING, SLEEPING, EmotionEngine
 from .database import Memory
@@ -56,6 +57,11 @@ TOUCH_DESC = {
     ("hair", "pet"): "is stroking your hair", ("body", "pet"): "is petting you",
     ("legs", "pet"): "is stroking your leg", ("legs", "rough"): "pressed hard on your leg",
     ("legs", "gentle"): "lightly touched your leg",
+    ("head", "squeeze"): "is squishing your head", ("cheek", "squeeze"): "is squishing your cheeks",
+    ("body", "squeeze"): "is squeezing you in a hug", ("hand", "squeeze"): "is squeezing your hand",
+    ("head", "move"): "is turning your head with their cursor", ("hand", "move"): "is moving your arm around",
+    ("legs", "move"): "is lifting your leg", ("body", "move"): "is pushing you so you lean",
+    ("hair", "tug"): "is pulling your hair",
     ("nose", "gentle"): "poked your nose", ("nose", "rough"): "jabbed your nose hard",
     ("nose", "pet"): "gently booped your nose", ("eyes", "gentle"): "poked you in the eye",
     ("chest", "pet"): "gently stroked you near your chest", ("skirt", "pet"): "gently stroked your skirt",
@@ -133,6 +139,7 @@ class WaifuApp(QObject):
         self.music.playing_changed.connect(self._on_music)
         self.music.error.connect(lambda m: log.warning(m))
 
+        self.attention = AttentionEngine(self)
         self.vision_timer = QTimer(self)
         self.vision_timer.timeout.connect(self._auto_glance)
         self.life = QTimer(self)
@@ -175,6 +182,8 @@ class WaifuApp(QObject):
                            "warmly in one sentence; you may mention something you remember.)", event=True)
 
     def on_user_text(self, text: str) -> None:
+        self.attention.engaged()
+        self.memory.bump("chat_msgs")
         now = time.monotonic()
         self.last_user_msg = self.last_exchange = now
         self.chat.add_message(self.cfg.user_name or "You", text, "you")
@@ -224,6 +233,7 @@ class WaifuApp(QObject):
 
     # ----------------------------------------------------------------- touch & emotions
     def on_touch(self, event: str) -> None:
+        self.attention.engaged()
         zone, _, kind = event.partition(":")
         group = ZONE_GROUP.get(zone, zone)
         was_asleep = self.emotion.state == SLEEPING
@@ -238,7 +248,7 @@ class WaifuApp(QObject):
         desc = TOUCH_DESC.get((group, kind)) or TOUCH_DESC.get((group, "any")) or \
             TOUCH_DESC.get(("body", kind)) or f"touched your {group}"
         use_ai = (self.cfg.ai_touch_reactions and self.cfg.effective_api_key() and not self.brain.busy
-                  and now - self._last_ai_touch > 30 and kind in ("pet", "rough"))
+                  and now - self._last_ai_touch > 30 and kind in ("pet", "rough", "squeeze"))
         if use_ai:
             self._last_ai_touch = self._last_quip = now
             user = self.cfg.user_name or "the user"
@@ -247,7 +257,7 @@ class WaifuApp(QObject):
             self.brain.ask(f"(Touch: {user} {desc}. It felt {feel}. "
                            "React in one short line, with a cute voice.)", event=True)
             return
-        if now - self._last_quip < (0.6 if kind in ("rough", "gentle", "tug") else 1.5):
+        if now - self._last_quip < (0.6 if kind in ("rough", "gentle", "tug", "move", "squeeze") else 1.5):
             return
         self._last_quip = now
         self.say(line(r.line), r.emotion)
@@ -469,6 +479,10 @@ class WaifuApp(QObject):
                 self._comment_on_music(changed=True)
         if self._life_n % 30 == 0:
             self._maybe_initiate(idle)
+        if self._life_n % 300 == 0 and idle < 120:      # learn when you're usually at the PC
+            self.memory.bump(f"active_h{datetime.now().hour}")
+        ignored = time.monotonic() - max(self.character.last_interaction, self.last_exchange)
+        self.attention.tick(idle, ignored)
 
     def _maybe_initiate(self, idle: float) -> None:
         mins = self.cfg.initiative_minutes
@@ -522,6 +536,7 @@ class WaifuApp(QObject):
         self.chat.dock(self.character.global_rect())
 
     def toggle_chat(self) -> None:
+        self.attention.engaged()
         if self.chat.isVisible():
             self.chat.hide()
         else:

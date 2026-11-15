@@ -16,6 +16,7 @@ listens to music with you and talks out loud. Her brain is Google Gemini, with a
 - [Quick start](#quick-start)
 - [Characters](#characters)
 - [Touch and gestures](#touch-and-gestures)
+- [She learns about you and seeks your attention](#she-learns-about-you-and-seeks-your-attention)
 - [Lifting by a limb and struggling](#lifting-by-a-limb-and-struggling)
 - [64 expressions and moods](#64-expressions-and-moods)
 - [Graceful movement and gestures](#graceful-movement-and-gestures)
@@ -49,7 +50,7 @@ listens to music with you and talks out loud. Her brain is Google Gemini, with a
 |---|---|---|
 | **Futuristic Girl** | 3D FBX (`assets/models/FuturisticGirl/`) | Detailed scanned mesh, animated procedurally in the shader: head and gaze tracking, shoulder-jointed arms (relaxed from the T-pose), breathing, and spring-wobble physics of the whole body |
 | **Seed-san 2** | 3D VRM, realistic mode | Soft lighting, rim light, contact shadow, weight-shift idle, eye micro-movements, curled fingers, idle gestures, waving and high fives |
-| **Seed-san** | 3D VRM | Fully rigged: walking legs, sitting on the taskbar edge, spring-bone hair and cloth, facial blend shapes |
+| **Seed-san** | 3D VRM (backpack hidden via `Seed-san.json`) | Fully rigged: walking legs, sitting on the taskbar edge, spring-bone hair and cloth, facial blend shapes |
 | **Live picture** | 2D image warp | Your own picture with hair, scarf and skirt physics, blinking eyelids and gaze tracking |
 | **Drawn girls** | 2D vector | Lightweight, with no assets needed |
 
@@ -65,24 +66,39 @@ listens to music with you and talks out loud. Her brain is Google Gemini, with a
 
 ## Touch and gestures
 
-**Every body part has its own hitbox:** head, hair, eyes, nose, mouth, cheeks, hands, legs, body, chest and skirt.
-A gesture listener (`waifu/gestures.py`) classifies how you touch, and the emotion engine decides how she feels about it.
+**Every body part has its own hitbox, and you can touch it and move it:** head (face), hair, eyes, nose, mouth,
+cheeks, hands, legs, body, chest and skirt. Hover over a part and a small hint pops up saying what it does
+(Settings → Appearance → *Show what each body part does*).
 
-| Mouse gesture | Meaning | She… |
-|---|---|---|
-| **Short click** | gentle touch | smiles softly and greets you sweetly |
-| **Long press / hold** (0.55 s) | hard, sudden press ("hayiyen gahanawa") | is startled or hurt and gets defensive; her mood drops and she may sulk |
-| **Double-click**, or **stroking** back and forth | petting ("athaganawa") | closes her eyes happily and blushes; hearts appear and affection rises a lot |
-| **Drag on her hair** | pulling | pouts cutely: "Ouch! Don't pull my hair~!" Her hair stretches toward the cursor and springs back |
-| **Click her eyes or nose** | poke | blinks and squints instantly, flinches back, and gives a cute warning |
-| **Chest or skirt: gentle stroke** | trusted, gentle touch | gives a sweet, shy smile; affection goes up |
-| **Chest or skirt: click, hold or hit** | sudden or inappropriate | blushes hard (with steam), recoils flustered and scolds you |
-| **Drag a hand or leg** | lifting by a limb | dangles from it and **struggles** (see below) |
-| **Drag her body** | picked up | swings with your motion; gravity drops her back onto the taskbar |
+| Mouse | She… |
+|---|---|
+| **Short click** | gentle touch: soft smile and a sweet greeting |
+| **Press and hold** | **squeeze**: the spot squishes under your finger ("puni♡"), she makes a ><, pouty face, then springs back with a jelly bounce. Cheeks: "Puni puni… m-my cheeks!" Body: "Kyu~ a tight hug!" |
+| **Hold too long** (1.8 s) | too hard: "Ow ow ow! Too hard!" She's hurt and her mood drops |
+| **Double-click**, or **stroke** back and forth | petting ("athaganawa"): happy closed eyes, blush, hearts; affection rises a lot |
+| **Drag her hair** | the hair follows your cursor and springs back when you let go, with a pouty "don't pull my hair~!" |
+| **Drag her face / head** | you **tilt and turn her head** |
+| **Drag a hand** | **her arm follows your cursor** |
+| **Drag a leg** | **her leg lifts toward the cursor** (on rigged models) |
+| **Drag her body** | **she leans**; drag far and you **pick her up** |
+| **Drag a hand or leg far** | she's **lifted by that limb** and struggles (see below) |
+| **Click eyes / nose** | instant blink and squint, a startled flinch, and a cute warning |
+| **Chest / skirt** | a gentle stroke gets a shy smile; a sudden touch gets extreme blushing with steam, a recoil and a scolding |
+
+![Moving every part](docs/images/move_every_part.png)
 
 ![Touch reactions](docs/images/touch.png)
 
----
+## She learns about you and seeks your attention
+
+- **Attention-seeking** (`waifu/attention.py`): if you're at the PC but ignore her for a few minutes
+  (Settings → Senses), she tries to get your attention. She walks over under your cursor and waves, hops and calls you,
+  dances cutely, pouts that she's lonely, or asks you a question with Gemini. This escalates every couple of minutes.
+- **She learns what works:** every attempt is scored by whether you respond within 45 s. The scores are saved in
+  `waifu_memory.db`, and she uses the tactics you react to more often.
+- **She learns your habits:** your usual hours at the PC, your favourite ways to interact (headpats, squishing,
+  moving her around…), what gets your attention, and facts from your chats. All of this goes into Gemini's
+  context, so her personality, topics and timing adapt to you.
 
 ## Lifting by a limb and struggling
 
@@ -175,7 +191,8 @@ main.py                    entry point
 requirements.txt           dependencies          setup.bat / run.bat   install & launch
 waifu/
   waifu_core.py            transparent overlay window: physics, walking, gravity, hitboxes, lifting + struggling
-  gestures.py              gesture listener: click / hold / double-click / stroke / pull / lift
+  gestures.py              gesture listener: click / squeeze / double-click / stroke / move / pull / lift
+  attention.py             attention-seeking tactics that learn what works on you
   gemini_brain.py          Gemini: chat, vision, audio, STT, memory facts, retries + model fallback
   database.py              SQLite memory: messages, facts, stats, moments (waifu_memory.db)
   emotion.py               state machine + moods + affection

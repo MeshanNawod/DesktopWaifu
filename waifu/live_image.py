@@ -117,6 +117,13 @@ class LiveImageCharacter:
                        "steam": 0.0}
         self._t = 0.0
         self._tugged: set[str] = set()
+        self._move_head = None
+        self._move_body = None
+        self._sq_pt = (0.0, 0.0)   # render px
+        self._sq_r = 30.0
+        self._sq = 0.0
+        self._sq_v = 0.0
+        self._sq_target = 0.0
         self._build(dpr)
 
     # ------------------------------------------------------------------ setup
@@ -268,6 +275,11 @@ class LiveImageCharacter:
         """Physical reaction to a click/touch on a zone."""
         b, rh = self.bones, self.rh
         side = random.choice((-1, 1))
+        if kind == "squeeze":
+            self.timers["blush"] = 3.0
+            self.timers["happy"] = 0.8
+            b["head"].kick(0, 0.12 * rh)
+            return
         if kind == "rough":   # flinch: eyes squeezed shut, knocked back, everything swings
             self.timers["eye_shut"] = 1.3
             self.timers["tears"] = 4.0
@@ -328,6 +340,29 @@ class LiveImageCharacter:
             b["hair_l"].kick(side * 0.2 * rh, 0)
             b["hair_r"].kick(side * 0.2 * rh, 0)
 
+    def manipulate(self, zone: str, delta) -> None:
+        """Drag a part: hands / hair / scarf / skirt follow, the head tilts, the body leans."""
+        if zone in ("hand_face", "hand_low", "hair_l", "hair_r", "scarf", "skirt"):
+            self.tug(zone, delta)
+        elif zone in ("head", "eye_l", "eye_r", "nose", "mouth", "cheek_l", "cheek_r"):
+            self._move_head = None if delta is None else (delta.x(), delta.y())
+        else:
+            self._move_body = None if delta is None else (delta.x(), delta.y())
+
+    def squeeze(self, local) -> None:
+        if local is None:
+            self._sq_target = 0.0
+            return
+        uv = self.to_image(local)
+        if uv is None:
+            return
+        self._sq_pt = (uv[0] * self.rw, uv[1] * self.rh)
+        zone = self.zone_at(local)
+        small = zone in ("eye_l", "eye_r", "nose", "mouth", "cheek_l", "cheek_r")
+        self._sq_r = (0.035 if small else 0.06) * self.rh
+        self._sq_target = 1.0
+        self.timers["blush"] = max(self.timers["blush"], 2.0)
+
     def tug(self, zone: str, delta: QPointF | None) -> None:
         """Hold-and-pull a soft part. delta is the cursor offset in window px; None = let go."""
         bone = {"hand_face": "hand_face", "hand_low": "hand_low", "scarf": "scarf",
@@ -387,8 +422,17 @@ class LiveImageCharacter:
         for name, ph, amp in (("hair_l", 0.0, 1.0), ("hair_r", 1.1, 1.0), ("scarf", 2.0, 0.6)):
             if name not in self._tugged:      # light breeze
                 b[name].tx = (math.sin(t * 1.3 + ph) * 0.006 + math.sin(t * 2.9 + ph) * 0.002) * rh * amp
+        if self._move_head:                       # you're tilting her head
+            h.tx += max(-0.03, min(0.03, self._move_head[0] * 0.0004)) * rh
+            h.ty += max(-0.02, min(0.02, self._move_head[1] * 0.0003)) * rh
+        for _ in range(2):                        # springy squish
+            hh = dt / 2
+            self._sq_v += (170.0 * (self._sq_target - self._sq) - 9.0 * self._sq_v) * hh
+            self._sq += self._sq_v * hh
         lean = b["lean"]
         lean.tx = 0.0
+        if self._move_body:
+            lean.tx = max(-12.0, min(12.0, self._move_body[0] * 0.08))
         if state == WALK:
             lean.tx = -5.0 if ctx.facing_left else 5.0
         elif ctx.music:
@@ -532,6 +576,13 @@ class LiveImageCharacter:
                 dx += m * bn.ox
             if abs(bn.oy) > 0.05:
                 dy += m * bn.oy
+        # squeeze: pinch the area around your finger (inverse map: sample further away)
+        if abs(self._sq) > 0.01:
+            cx, cy = self._sq_pt
+            ddx, ddy = self.X - cx, self.Y - cy
+            f = np.clip(1.0 - np.sqrt(ddx * ddx + ddy * ddy) / self._sq_r, 0, 1) ** 2 * self._sq * 0.8
+            dy -= ddy * f * 0.55
+            dx += ddx * f * 0.2
         # eyes follow the cursor
         ex, ey = self.look[0] * 0.005 * rh, self.look[1] * 0.004 * rh
         if abs(ex) > 0.05 or abs(ey) > 0.05:

@@ -26,7 +26,7 @@ DEFAULT_SYSTEM = (
 )
 
 EMOTIONS = ["neutral", "happy", "excited", "shy", "flustered", "playful", "sad", "angry", "surprised",
-            "thinking", "sleepy", "hurt", "struggling", "pout"]
+            "thinking", "sleepy", "hurt", "struggling", "pout", "squeezed", "lonely"]
 
 
 @dataclass
@@ -72,6 +72,8 @@ class Config:
     vrm_path: str = ""                     # .vrm file; empty = first file in assets/models
     image_pack: str = ""                   # folder with character.png/json; empty = bundled
     ai_touch_reactions: bool = True        # Gemini writes reactions to touches (with cooldown)
+    touch_hints: bool = True               # show what each body part does when you hover it
+    attention_minutes: float = 5.0         # she tries to get your attention after this long without you (0 = never)
 
     # Senses & life
     webcam_enabled: bool = False           # she can see you (presence detection runs locally)

@@ -113,6 +113,7 @@ class EmotionEngine(QObject):
         """kind: gentle | tap | rough | tug. Returns how she reacts."""
         now = time.monotonic()
         woke = False
+        self.mem.bump(f"touch_{kind}")            # what you like to do with her (habit learning)
         if self.state == SLEEPING:
             woke = True
             self.wake(gentle=kind != "rough")
@@ -135,6 +136,18 @@ class EmotionEngine(QObject):
             # poke in the eye / nose: instant blink, startled recoil, cute warning (doesn't hurt like a hit)
             self._adjust(-1.5, 0)
             return Reaction("surprised", f"{zone}_poke", -1.5, 0, woke)
+        if kind == "squeeze":
+            # squishing her (cheeks, body, hands...): cute and a little embarrassing
+            gain, aff = (3.0, 1.5) if zone in NICE_ZONES | {"body", "mouth", "nose", "eyes"} else (2.0, 0.5)
+            self._adjust(gain, aff)
+            self.mem.bump("squeezes")
+            self._flavour("playful" if self.affection >= 50 else "shy", 15)
+            return Reaction("squeezed", f"{zone}_squeeze", gain, aff, woke)
+        if kind == "move":
+            # you're moving her head / arm / leg / body around
+            self._adjust(0.5, 0.2)
+            emo = {"hand": "shy", "legs": "flustered", "head": "surprised"}.get(zone, "surprised")
+            return Reaction(emo, f"{zone}_move", 0.5, 0.2, woke)
         if kind == "rough":
             self._hits = [t for t in self._hits if now - t < 20] + [now]
             hurt = -12 if zone == "eyes" else -9
@@ -143,7 +156,7 @@ class EmotionEngine(QObject):
             if len(self._hits) == 1:
                 self.mem.event("hurt", f"They hit my {zone}.")
             self._set(HURT, 25 + 15 * len(self._hits))
-            return Reaction("hurt", f"{zone}_rough" if len(self._hits) < 3 else "hurt_repeat", hurt, 0, woke)
+            return Reaction("hurt", "too_hard" if len(self._hits) < 3 else "hurt_repeat", hurt, 0, woke)
         if kind == "tug" and zone in ("hair", "scarf"):
             # pulling her hair: a cute, slightly pouting "ouch, don't pull!"
             self._adjust(-3, -0.5)

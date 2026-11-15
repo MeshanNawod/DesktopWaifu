@@ -116,6 +116,13 @@ class MeshCharacter:
         self.timers = {"eye_shut": 0.0, "blush": 0.0, "tears": 0.0, "happy": 0.0, "steam": 0.0}
         self._press_local = QPointF()
         self._tug_hand = None
+        self._move_head = None
+        self._move_body = None
+        self._sq_center = np.zeros(3)
+        self._sq_radius = 0.08
+        self._sq = 0.0
+        self._sq_v = 0.0
+        self._sq_target = 0.0
         self._grab_blend = 0.0
         self._grab_last = None
         self._frame: QImage | None = None
@@ -250,6 +257,11 @@ class MeshCharacter:
         pass
 
     def react(self, zone: str, kind: str = "tap") -> None:
+        self.squash_v += 0.35 if kind in ("pet", "squeeze", "gentle") else 0.6     # jelly bounce
+        if kind == "squeeze":
+            self.timers["blush"] = 3.0
+            self.timers["happy"] = 0.8
+            return
         s = random.choice((-1.0, 1.0))
         if kind == "rough":
             self.timers["eye_shut"] = 1.2
@@ -277,6 +289,29 @@ class MeshCharacter:
             self.head_kick_v += np.array([(-1 if zone == "hair_l" else 1) * 60.0, 0.0])
         else:
             self.bend_v += np.array([s * 0.25, 0.0])
+
+    def manipulate(self, zone: str, delta) -> None:
+        """Drag a part: head tilts toward the drag, arms follow the cursor, body leans."""
+        if zone in ("hand_l", "hand_r"):
+            self.tug(zone, delta)
+        elif zone in ("head", "eye_l", "eye_r", "nose", "mouth", "cheek_l", "cheek_r", "hair_l", "hair_r"):
+            self._move_head = None if delta is None else (delta.x(), delta.y())
+        else:
+            self._move_body = None if delta is None else (delta.x(), delta.y())
+        if delta is None:
+            self.squash_v += 0.5          # jelly bounce when you let go
+
+    def squeeze(self, local) -> None:
+        if local is None:
+            self._sq_target = 0.0
+            return
+        ndc = np.array([local.x() / self.W * 2 - 1, 1 - local.y() / self.H * 2, 0.0, 1.0])
+        w = np.linalg.inv(self._vp) @ ndc
+        self._sq_center = w[:3] / w[3]
+        zone = self.zone_at(local)
+        small = zone in ("eye_l", "eye_r", "nose", "mouth", "cheek_l", "cheek_r", "hand_l", "hand_r")
+        self._sq_radius = (0.04 if small else 0.07) * self.m.height
+        self._sq_target = 1.0
 
     def tug(self, zone: str, delta: QPointF | None) -> None:
         if zone in ("hand_l", "hand_r") and self.arm_on:
@@ -321,6 +356,16 @@ class MeshCharacter:
         # head orientation
         yaw = self.look[0] * 35 + self.head_kick[0] * 0.2
         pitch = -self.look[1] * 20 + self.head_kick[1] * 0.2
+        if self._move_head:                       # you're tilting her head
+            mdx, mdy = self._move_head
+            yaw += max(-40.0, min(40.0, mdx * 0.3))
+            pitch += max(-25.0, min(25.0, mdy * 0.2))
+        if self._move_body:                       # you're pushing her body: she leans
+            self.bend += (np.array([max(-0.12, min(0.12, self._move_body[0] * 0.0012)), 0.0]) - self.bend) * 0.2
+        for _ in range(2):                        # springy squish
+            hh = dt / 2
+            self._sq_v += (170.0 * (self._sq_target - self._sq) - 9.0 * self._sq_v) * hh
+            self._sq += self._sq_v * hh
         if state == SLEEP or ctx.emotion == "sleepy":
             pitch, yaw = 22.0, 8.0
         if state == PET:
@@ -335,6 +380,8 @@ class MeshCharacter:
             roll = ex.roll
         else:
             roll = 0.0
+        if self._move_head:
+            roll += max(-20.0, min(20.0, -self._move_head[0] * 0.15))
         q = q_mul(q_mul(q_axis((0, 1, 0), yaw), q_axis((1, 0, 0), pitch)), q_axis((0, 0, 1), -roll))
         # arms: relaxed, raised when dragged/falling, waving with music, reaching when you pull a hand
         if self.arm_on:
@@ -428,7 +475,8 @@ class MeshCharacter:
                   "squash": float(self.squash), "breath": self._deform["breath"],
                   "arms": (self.arm_on, getattr(self, "arm_y", 0.0), getattr(self, "shoulder_x", 0.0),
                            float(self.arm_ang[0]), float(self.arm_ang[1]))}
-        img = self.gl.render(W, self._vp, {}, deform=deform)
+        sq = (self._sq_center, self._sq_radius, self._sq * 0.85) if abs(self._sq) > 0.01 else None
+        img = self.gl.render(W, self._vp, {}, deform=deform, squeeze=sq)
         img.setDevicePixelRatio(self.dpr)
         p = QPainter(img)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)

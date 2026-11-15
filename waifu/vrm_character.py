@@ -33,6 +33,7 @@ EMOTION_EXPR = {
     "flustered": {"surprised": 0.35, "relaxed": 0.35}, "playful": {"happy": 0.6, "ih": 0.2},
     "struggling": {"surprised": 0.55, "angry": 0.3, "aa": 0.35},
     "pout": {"angry": 0.3, "ou": 0.6},
+    "squeezed": {"blink": 1.0, "ou": 0.55, "happy": 0.15},
 }
 ARM_DOWN = 77.0
 
@@ -111,6 +112,16 @@ class VrmCharacter:
         self._grab_blend = 0.0
         self._grab_last = None
         self._pin_M = None
+        self._move_head = None       # (dx, dy) while you drag her face
+        self._move_body = None       # (dx, dy) while you drag her body
+        self._move_leg = None        # (zone, cursor point) while you drag a leg
+        self._sq_center = np.zeros(3)
+        self._sq_radius = 0.1
+        self._sq = 0.0
+        self._sq_v = 0.0
+        self._sq_target = 0.0
+        self._jelly = 0.0
+        self._jelly_v = 0.0
         self.gesture: str | None = None
         self.gesture_t = 0.0
         self._next_gesture = random.uniform(6, 12)
@@ -138,7 +149,7 @@ class VrmCharacter:
         self.look = [0.0, 0.0]
         self._look_target = [0.0, 0.0]
         self.timers = {"eye_shut": 0.0, "blush": 0.0, "lean": 0.0, "jerk": 0.0, "wave_l": 0.0, "wave_r": 0.0,
-                       "tears": 0.0, "steam": 0.0}
+                       "tears": 0.0, "steam": 0.0, "puni": 0.0}
         self.lean_sign = 1.0
         self._tug_hand: tuple[str, QPointF] | None = None
         self._pinned: list = []
@@ -218,7 +229,8 @@ class VrmCharacter:
             if knee is not None and foot is not None:
                 z.append((side, (knee + foot) / 2, 0.075 * k))
                 z.append((side, knee, 0.06 * k))
-        z.append(("head", hc, 0.12 * k))
+        # the face (front, lower part of the head) is "head": drag = tilt, click = hello
+        z.append(("head", hc + self._canon((0, -0.03, 0.06)), 0.072 * k))
         ch = m.bone_pos(W, "upperChest")
         if ch is None:
             ch = m.bone_pos(W, "chest")
@@ -244,9 +256,12 @@ class VrmCharacter:
             rp = r * self.ppm
             if (sx - lx) ** 2 + (sy - ly) ** 2 <= rp * rp:
                 return name
-        near = self.springs.tails_near(self.project, (lx, ly), 22)
+        near = self.springs.tails_near(self.project, (lx, ly), 34)
+        hx, hy = self.project(self._head_center())
         if any(id(j) in self.hair_springs for j in near):
-            hx, _ = self.project(self._head_center())
+            return "hair_l" if lx > hx else "hair_r"
+        # anything around the head that isn't the face is her hair
+        if (lx - hx) ** 2 + (ly - hy) ** 2 <= (0.17 * self.k * self.ppm) ** 2 and ly < hy + 0.06 * self.k * self.ppm:
             return "hair_l" if lx > hx else "hair_r"
         if near:
             return "skirt"
@@ -276,6 +291,11 @@ class VrmCharacter:
 
     def react(self, zone: str, kind: str = "tap") -> None:
         side = random.choice((-1.0, 1.0))
+        self._jelly_v += 3.0 if kind in ("pet", "squeeze", "gentle") else 5.0
+        if kind == "squeeze":
+            self.timers["blush"] = 3.0
+            self.timers["puni"] = 1.0
+            return
         if kind == "rough":   # flinch: eyes squeezed shut, head knocked back, tears
             self.timers["eye_shut"] = 1.2
             self.timers["jerk"] = 0.5
@@ -460,6 +480,8 @@ class VrmCharacter:
 
         if self.enhanced:
             self._enhanced_pose(P, hip, state, ctx, add)
+        if state not in (DRAG, FALL):
+            self._manip_pose(P, add)
 
         # looking at the cursor
         if state not in (SLEEP, DRAG):
@@ -489,6 +511,70 @@ class VrmCharacter:
                 P[f"{side}UpperArm"] = q_from_vectors(rest_dir, d)
                 P[f"{side}LowerArm"] = _ry(-8 if side == "left" else 8)
         return P, hip
+
+    # ------------------------------------------------------------------ touch & move every part
+    def manipulate(self, zone: str, delta) -> None:
+        """You drag one part of her: that part follows the cursor (None = let go, it springs back)."""
+        if zone in ("hand_l", "hand_r"):
+            self.tug(zone, delta)
+        elif zone in ("leg_l", "leg_r"):
+            self._move_leg = None if delta is None else (zone, self._press_local + delta)
+        elif zone in ("head", "eye_l", "eye_r", "nose", "mouth", "cheek_l", "cheek_r"):
+            self._move_head = None if delta is None else (delta.x(), delta.y())
+        elif zone in ("hair_l", "hair_r", "skirt", "scarf"):
+            self.tug(zone, delta)
+            if zone in ("hair_l", "hair_r"):
+                self._move_head = None if delta is None else (delta.x() * 0.25, delta.y() * 0.15)
+        else:
+            self._move_body = None if delta is None else (delta.x(), delta.y())
+        if delta is None:
+            self._jelly_v += 2.0
+
+    def squeeze(self, local) -> None:
+        """Hold on a spot: it squishes. None = let go (springs back with a little boing)."""
+        if local is None:
+            self._sq_target = 0.0
+            return
+        ndc = np.array([local.x() / self.W * 2 - 1, 1 - local.y() / self.H * 2, 0.0, 1.0])
+        w = np.linalg.inv(self._vp) @ ndc
+        self._sq_center = w[:3] / w[3]
+        zone = self.zone_at(local)
+        small = zone in ("eye_l", "eye_r", "nose", "mouth", "cheek_l", "cheek_r", "hand_l", "hand_r")
+        self._sq_radius = (0.05 if small else 0.085) * self.m.height
+        self._sq_target = 1.0
+
+    def _update_squish(self, dt: float) -> None:
+        # squeeze: springy (overshoots into a little bulge when released); jelly: whole-body wobble
+        for _ in range(2):
+            h = dt / 2
+            self._sq_v += (170.0 * (self._sq_target - self._sq) - 9.0 * self._sq_v) * h
+            self._sq += self._sq_v * h
+            self._jelly_v += (-150.0 * self._jelly - 7.0 * self._jelly_v) * h
+            self._jelly += self._jelly_v * h
+
+    def _manip_pose(self, P: dict, add) -> None:
+        clamp = lambda v, a: max(-a, min(a, v))   # noqa: E731
+        if self._move_head:
+            dx, dy = self._move_head
+            add("neck", q_mul(q_mul(_ry(clamp(dx * 0.2, 25)), _rx(clamp(dy * 0.15, 20))), _rz(clamp(-dx * 0.12, 15))))
+            add("head", q_mul(q_mul(_ry(clamp(dx * 0.3, 38)), _rx(clamp(dy * 0.25, 28))), _rz(clamp(-dx * 0.28, 30))))
+            add("spine", _rz(clamp(-dx * 0.04, 6)))
+        if self._move_body:
+            dx, dy = self._move_body
+            add("spine", q_mul(_rz(clamp(-dx * 0.12, 20)), _rx(clamp(dy * 0.1, 18))))
+            add("chest", q_mul(_rz(clamp(-dx * 0.08, 14)), _rx(clamp(dy * 0.06, 12))))
+        if self._move_leg and self._W is not None:
+            zone, pt = self._move_leg
+            side = "left" if zone == "leg_l" else "right"
+            hp = self.m.bone_pos(self._W, f"{side}UpperLeg")
+            if hp is not None:
+                sx, sy = self.project(hp)
+                d_world = np.array([pt.x() - sx, -(pt.y() - sy), 0.3 * self.ppm * self.k])
+                d = q_rotate(q_inv(self._root_rot), normalize(d_world))
+                if d[1] > 0.2:                      # can't bend that far up: keep it a high kick
+                    d[1] = 0.2
+                P[f"{side}UpperLeg"] = q_from_vectors(np.array([0.0, -1.0, 0.0]), d)
+                P[f"{side}LowerLeg"] = _rx(8)
 
     # ------------------------------------------------------------------ lifted by a limb: dangle + struggle
     def _limb_hang_pose(self, P: dict, add, ctx: FrameContext) -> None:
@@ -718,6 +804,10 @@ class VrmCharacter:
         pivot = np.array([0.0, self.m.height * 0.82, 0.0])
         root = (translate(*self.off) @ translate(*pivot) @ rot_m4(_rz(tilt)) @ translate(*-pivot)
                 @ translate(0, hop, 0) @ rot_m4(_ry(self.yaw)))
+        self._update_squish(dt)
+        j = max(-0.6, min(0.6, self._jelly))
+        S = np.diag([1 - j * 0.035, 1 + j * 0.06, 1 - j * 0.035, 1.0])
+        root = root @ S
         if self.m.version == 0:
             root = root @ rot_m4(R180)
 
@@ -760,7 +850,8 @@ class VrmCharacter:
             self.gl.ctx.makeCurrent(self.gl.surface)
             self.gl.resize(round(self.W * dpr), round(self.H * dpr))
             self.gl.ctx.doneCurrent()
-        img = self.gl.render(self._W, self._vp, self._morph_weights())
+        sq = (self._sq_center, self._sq_radius, self._sq * 0.85) if abs(self._sq) > 0.01 else None
+        img = self.gl.render(self._W, self._vp, self._morph_weights(), squeeze=sq)
         img.setDevicePixelRatio(self.dpr)
         if self.enhanced and state not in (DRAG, FALL):
             # soft contact shadow under her feet, drawn beneath the model
@@ -818,6 +909,14 @@ class VrmCharacter:
                 p.setBrush(g)
                 p.drawEllipse(QPointF(cx, cy), r, r * 0.6)
         top = self.project(hc + self._canon((0, 0.13, 0)))
+        if self.timers["puni"] > 0:
+            ph = 1 - self.timers["puni"]
+            x, y = self.project(self._sq_center)
+            p.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+            col = QColor("#ff5c8a")
+            col.setAlphaF(max(0.0, 1 - ph))
+            p.setPen(col)
+            p.drawText(QPointF(x + 8, y - 10 - ph * 18), "puni♡")
         if self.timers["steam"] > 0 or ctx.emotion == "flustered":
             draw_steam(p, top[0], top[1] + 4, t, 0.9)
         if ctx.struggle > 0.3:   # flailing: sweat drops and little motion marks

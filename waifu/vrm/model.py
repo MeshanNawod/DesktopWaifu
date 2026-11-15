@@ -211,6 +211,22 @@ class VrmModel:
         # ---- textures / materials
         self.textures = j.get("textures", [])
         self.materials = [self._material(i, m, ext) for i, m in enumerate(j.get("materials", []))]
+        # optional sidecar "<model>.json": parts to hide (e.g. a backpack you don't want)
+        self.options = {}
+        side = self.g.path.with_suffix(".json")
+        if side.exists():
+            try:
+                import json as _json
+                self.options = _json.loads(side.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                log.warning("Bad model options file %s", side)
+        hide_mat = set(self.options.get("hide_materials", []))
+        hide_mesh = set(self.options.get("hide_meshes", []))
+        mat_names = [m.get("name", "") for m in j.get("materials", [])]
+        for mi, prims in self.mesh_prims.items():
+            mesh_name = j["meshes"][mi].get("name", "")
+            self.mesh_prims[mi] = [p for p in prims if mesh_name not in hide_mesh
+                                   and not (0 <= p.material < len(mat_names) and mat_names[p.material] in hide_mat)]
         if not self.materials:
             self.materials = [Material()]
 

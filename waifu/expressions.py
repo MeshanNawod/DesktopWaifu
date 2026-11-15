@@ -42,7 +42,7 @@ MOOD_PREFS: dict[str, tuple[dict[str, float], dict[str, float]]] = {
 EMOTION_MOOD = {
     "happy": "happy", "excited": "happy", "shy": "shy", "flustered": "flustered", "surprised": "flustered",
     "sleepy": "sleepy", "sad": "upset", "angry": "upset", "hurt": "upset", "playful": "playful",
-    "thinking": "neutral", "neutral": "neutral", "struggling": "struggling", "pout": "upset",
+    "thinking": "neutral", "neutral": "neutral", "struggling": "struggling", "pout": "upset", "squeezed": "flustered", "lonely": "upset",
 }
 
 # gaze -> (look offset x, y in -1..1, eyelid 0..1, extra)

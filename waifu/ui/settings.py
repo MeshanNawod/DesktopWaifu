@@ -181,6 +181,8 @@ class SettingsDialog(QDialog):
         row_img.addWidget(self.image_pack, 1)
         row_img.addWidget(browse_img)
         f.addRow("Live picture folder", row_img)
+        self.touch_hints = QCheckBox("Show what each body part does when hovering", checked=cfg.touch_hints)
+        f.addRow(self.touch_hints)
         self.ai_touch = QCheckBox("Gemini reacts to touches (otherwise instant preset lines)",
                                   checked=cfg.ai_touch_reactions)
         f.addRow(self.ai_touch)
@@ -220,6 +222,7 @@ class SettingsDialog(QDialog):
                                     checked=cfg.wake_by_voice)
         self.initiative = _dspin(0, 240, 5, cfg.initiative_minutes, 0)
         self.sleep_after = _dspin(0, 240, 1, cfg.sleep_after_min, 0)
+        self.attention_min = _dspin(0, 120, 1, cfg.attention_minutes, 0)
         note = QLabel("Presence detection, beat detection and wake-word listening are processed on this PC. "
                       "Only explicit looks, greetings, song clips and speech you address to her are sent to Gemini.",
                       wordWrap=True)
@@ -231,6 +234,7 @@ class SettingsDialog(QDialog):
         f.addRow(self.wake_voice)
         f.addRow("Start a chat after silence (min, 0 = never)", self.initiative)
         f.addRow("Nap after you're idle (min, 0 = never)", self.sleep_after)
+        f.addRow("Seek your attention after (min, 0 = never)", self.attention_min)
         f.addRow(note)
         tabs.addTab(w, "Senses")
 
@@ -416,6 +420,8 @@ class SettingsDialog(QDialog):
         c.wake_by_voice = self.wake_voice.isChecked()
         c.initiative_minutes = self.initiative.value()
         c.sleep_after_min = self.sleep_after.value()
+        c.attention_minutes = self.attention_min.value()
+        c.touch_hints = self.touch_hints.isChecked()
         c.ai_touch_reactions = self.ai_touch.isChecked()
         c.bubble_seconds = self.bubble.value()
 

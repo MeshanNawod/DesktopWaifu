@@ -1,12 +1,14 @@
-"""Gesture listener: turns raw mouse presses into the interaction types she understands.
+"""Gesture listener: turns raw mouse input into the touches she understands.
 
-    CLICK   short press and release          -> gentle touch (soft smile, sweet greeting)
-    HOLD    press and keep holding still      -> firm press / hit ("hayiyen gahanawa"): startled, hurt
-    DOUBLE  double click                      -> petting ("athaganawa"): happy closed eyes, blush
-    STROKE  press-and-rub on head/face,       -> petting too (each ~220 px of rubbing counts as one stroke)
-            or hovering back and forth over head, face, hair or a sensitive area
-    PULL    press on her hair / scarf and drag -> pulling: she pouts "don't pull my hair!"
-    LIFT    press on a hand/leg/body and drag -> she's lifted (by that limb) and struggles
+    CLICK     short press and release                -> gentle touch: soft smile, sweet greeting
+    SQUEEZE   press and hold still (0.3 s+)          -> squish that spot ("puni puni"), cute reaction on release
+    HARD      keep squeezing too long (1.8 s+)       -> too hard: it hurts, she gets defensive
+    DOUBLE    double click                           -> petting ("athaganawa"): happy closed eyes, blush
+    STROKE    hovering / rubbing back and forth      -> petting too
+    MOVE      press a part and drag a little         -> you move THAT part: head tilts, arm / leg follows
+                                                        the cursor, body leans, skirt is pulled
+    PULL      press her hair / scarf and drag        -> the hair follows your cursor: "don't pull my hair!"
+    LIFT      drag a hand / leg / body far enough    -> she's lifted by it, dangles and struggles
 
 The listener only classifies; the character window decides what each gesture does.
 """
@@ -15,63 +17,71 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, QPointF, QTimer, Signal
 from PySide6.QtWidgets import QApplication
 
-CLICK, HOLD, DOUBLE, STROKE, PULL = "click", "hold", "double", "stroke", "pull"
-LIMBS = {"hand_l", "hand_r", "hand_face", "hand_low", "leg_l", "leg_r"}
-# pressing and moving on these zones strokes her instead of picking her up
-STROKE_ZONES = {"head", "cheek_l", "cheek_r", "mouth", "nose", "eye_l", "eye_r"}
-# pressing and dragging these pulls them (hair springs follow the cursor)
-PULL_ZONES = {"hair_l", "hair_r", "scarf"}
-PULL_PX = 30.0
-LIMB_ALIAS = {"hand_face": "hand_l", "hand_low": "hand_r"}
+CLICK, SQUEEZE, HARD, DOUBLE, STROKE, MOVE, PULL = "click", "squeeze", "hard", "double", "stroke", "move", "pull"
+HOLD = HARD   # backwards-compatible name
 
-HOLD_SECONDS = 0.55
+LIMBS = {"hand_l", "hand_r", "hand_face", "hand_low", "leg_l", "leg_r"}
+LIMB_ALIAS = {"hand_face": "hand_l", "hand_low": "hand_r"}
+# dragging these pulls them (hair / cloth springs follow the cursor); they never lift her
+PULL_ZONES = {"hair_l", "hair_r", "hair", "scarf"}
+# dragging the face / head moves her head; it never lifts her
+FACE_ZONES = {"head", "eye_l", "eye_r", "nose", "mouth", "cheek_l", "cheek_r"}
+STROKE_ZONES = set()   # (kept for compatibility: stroking is done by hovering / double click)
+
+SQUEEZE_SECONDS = 0.3
+HARD_SECONDS = 1.8
 MOVE_PX = 6.0
-STROKE_PX = 220.0
+PULL_PX = 30.0
+LIFT_PX = 140.0      # drag a limb / her body further than this and she's picked up
 
 
 class GestureListener(QObject):
     gesture = Signal(str, str)          # (kind, zone)
+    squeeze_started = Signal(str)       # zone: start the squish visual right away
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.zone = "body"
         self.pressed = False
         self.moved = False
-        self.consumed = False            # a HOLD/DOUBLE already fired for this press
-        self.mode: str | None = None     # "lift" or "stroke" once the cursor moved
+        self.consumed = False
+        self.squeezing = False
+        self.mode: str | None = None     # "move", "pull" or "lift"
         self._press = QPointF()
         self._last = QPointF()
-        self._stroke = 0.0
-        self._hold = QTimer(self, singleShot=True)
-        self._hold.timeout.connect(self._on_hold)
+        self._sq = QTimer(self, singleShot=True)
+        self._sq.timeout.connect(self._on_squeeze)
+        self._hard = QTimer(self, singleShot=True)
+        self._hard.timeout.connect(self._on_hard)
         self._single = QTimer(self, singleShot=True)
         self._single.timeout.connect(lambda: self.gesture.emit(CLICK, self.zone))
+        self._moved_emitted = False
 
     # ------------------------------------------------------------------ events from the window
     def press(self, zone: str, gpos: QPointF) -> None:
         self.zone, self.pressed, self.moved, self.consumed, self.mode = zone, True, False, False, None
+        self.squeezing = False
+        self._moved_emitted = False
         self._press = self._last = QPointF(gpos)
-        self._stroke = 0.0
-        self._hold.start(int(HOLD_SECONDS * 1000))
+        self._sq.start(int(SQUEEZE_SECONDS * 1000))
+        self._hard.start(int(HARD_SECONDS * 1000))
 
     def move(self, gpos: QPointF) -> str | None:
-        """Returns "lift" or "stroke" once the press turned into a drag, else None."""
+        """Returns "move", "pull" or "lift" once the press turned into a drag, else None."""
         if not self.pressed:
             return None
-        if not self.moved and (gpos - self._press).manhattanLength() > MOVE_PX:
+        dist = (gpos - self._press).manhattanLength()
+        if not self.moved and dist > MOVE_PX and not self.squeezing:
             self.moved = True
-            self._hold.stop()
+            self._sq.stop()
+            self._hard.stop()
             self._single.stop()
-            self.mode = "stroke" if self.zone in STROKE_ZONES else "pull" if self.zone in PULL_ZONES else "lift"
-        if self.moved and self.mode == "stroke":
-            self._stroke += (gpos - self._last).manhattanLength()
-            if self._stroke >= STROKE_PX:
-                self._stroke = 0.0
-                self.gesture.emit(STROKE, self.zone)
-        pulled = (gpos - self._press).manhattanLength() >= PULL_PX
-        if self.moved and self.mode == "pull" and not self.consumed and pulled:
-            self.consumed = True
-            self.gesture.emit(PULL, self.zone)
+            self.mode = "pull" if self.zone in PULL_ZONES else "move"
+        if self.moved and self.mode == "move" and dist >= LIFT_PX and self.zone not in FACE_ZONES:
+            self.mode = "lift"
+        if self.moved and not self._moved_emitted and dist >= PULL_PX:
+            self._moved_emitted = True
+            self.gesture.emit(PULL if self.mode == "pull" else MOVE, self.zone)
         self._last = QPointF(gpos)
         return self.mode if self.moved else None
 
@@ -79,21 +89,35 @@ class GestureListener(QObject):
         if not self.pressed:
             return
         self.pressed = False
-        self._hold.stop()
+        self._sq.stop()
+        self._hard.stop()
+        if self.squeezing and not self.consumed:
+            self.squeezing = False
+            self.gesture.emit(SQUEEZE, self.zone)
+            return
+        self.squeezing = False
         if self.consumed or self.moved:
             return
         self._single.start(QApplication.doubleClickInterval())   # maybe the first half of a double click
 
     def double(self, zone: str) -> None:
         self._single.stop()
-        self._hold.stop()
+        self._sq.stop()
+        self._hard.stop()
         self.zone, self.pressed, self.consumed, self.moved = zone, True, True, False
+        self.squeezing = False
         self.gesture.emit(DOUBLE, zone)
 
     def hover_stroke(self, zone: str) -> None:
         self.gesture.emit(STROKE, zone)
 
-    def _on_hold(self) -> None:
+    def _on_squeeze(self) -> None:
+        if self.pressed and not self.moved:
+            self.squeezing = True
+            self.squeeze_started.emit(self.zone)
+
+    def _on_hard(self) -> None:
         if self.pressed and not self.moved:
             self.consumed = True
-            self.gesture.emit(HOLD, self.zone)
+            self.squeezing = False
+            self.gesture.emit(HARD, self.zone)

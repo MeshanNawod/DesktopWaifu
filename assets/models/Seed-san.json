@@ -1,0 +1,17 @@
+{
+  "comment": "Per-model options for Seed-san.vrm. Hidden parts are simply not drawn.",
+  "hide_meshes": [
+    "robo_arm"
+  ],
+  "hide_materials": [
+    "arm_mat",
+    "arm_plastic",
+    "green_emit",
+    "robo_face",
+    "glass",
+    "backpack_metal",
+    "backpack_nm",
+    "backpack_plastic",
+    "armgear_plastic"
+  ]
+}

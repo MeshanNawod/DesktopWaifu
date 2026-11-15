@@ -118,11 +118,42 @@ class Memory:
         if facts:
             lines.append("Things you remember about them:")
             lines += [f"- {f}" for _, _, f in reversed(facts)]
+        habits = self.habits()
+        if habits:
+            lines.append("What you've learned about their habits:")
+            lines += [f"- {h}" for h in habits]
         ev = self.recent_events(6)
         if ev:
             lines.append("Recent moments together:")
             lines += [f"- {datetime.fromtimestamp(ts):%d %b %H:%M}: {d}" for ts, _, d in ev]
         return "\n".join(lines)
+
+    def habits(self) -> list[str]:
+        """Patterns learned from how they use the PC and treat her."""
+        out = []
+        with self._lock:
+            rows = self.db.execute("SELECT key, value FROM stats").fetchall()
+        st = {k: float(v) for k, v in rows if _is_num(v)}
+        hours = sorted(((st[k], int(k[8:])) for k in st if k.startswith("active_h")), reverse=True)[:3]
+        if hours and hours[0][0] >= 3:
+            out.append("They're usually at the PC around " + ", ".join(f"{h:02d}:00" for _, h in sorted(hours, key=lambda x: x[1])) + ".")
+        names = {"touch_pet": "headpats and stroking", "touch_squeeze": "squishing you", "touch_gentle": "little pokes",
+                 "touch_move": "moving you around", "touch_tug": "playing with your hair", "touch_rough": "being rough"}
+        touches = sorted(((st.get(k, 0), v) for k, v in names.items()), reverse=True)
+        fav = [f"{v} ({int(n)}x)" for n, v in touches if n >= 3][:3]
+        if fav:
+            out.append("Their favourite ways to interact with you: " + ", ".join(fav) + ".")
+        tactics = {"approach_wave": "walking over and waving", "hop_call": "hopping and calling them",
+                   "dance": "dancing cutely", "lonely_pout": "pouting that you're lonely",
+                   "ask_question": "asking them questions"}
+        scored = [((st.get(f"tactic_{t}_ok", 0) + 1) / (st.get(f"tactic_{t}_try", 0) + 2), d)
+                  for t, d in tactics.items() if st.get(f"tactic_{t}_try", 0) >= 2]
+        if scored:
+            out.append("What best gets their attention: " + max(scored)[1] + ".")
+        msgs = st.get("chat_msgs", 0)
+        if msgs >= 10:
+            out.append(f"They have chatted with you {int(msgs)} times.")
+        return out
 
     def wipe(self) -> None:
         with self._lock:

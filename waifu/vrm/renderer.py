@@ -48,6 +48,10 @@ uniform vec2 uBend;
 uniform float uSquash;
 uniform float uBreath;
 uniform int uArmOn;
+// squeeze: a soft squish around the point you're pressing (world space)
+uniform vec3 uSqzCenter;
+uniform float uSqzRadius;
+uniform float uSqzAmount;
 uniform float uArmY;
 uniform float uShoulderX;
 uniform vec2 uArmAng;
@@ -96,6 +100,13 @@ void main() {
     }
     vec4 wp = m * vec4(pos, 1.0);
     vec3 n = normalize(mat3(m) * nrm);
+    if (abs(uSqzAmount) > 0.001) {
+        vec2 d = wp.xy - uSqzCenter.xy;
+        float f = (1.0 - smoothstep(0.0, uSqzRadius, length(d))) * uSqzAmount;
+        wp.y -= d.y * f * 0.75;        // squash toward the finger...
+        wp.x += d.x * f * 0.32;        // ...and puff out sideways (negative amount = springy bulge)
+        wp.z -= f * uSqzRadius * 0.3;
+    }
     if (uOutlineMode == 1) wp.xyz += n * uOutlineWidth;
     gl_Position = uViewProj * wp;
     if (uOutlineMode == 2) {
@@ -339,7 +350,8 @@ class VrmRenderer:
             gl.glUniform1i(self.loc(has), 1 if tid else 0)
 
     def render(self, W: np.ndarray, view_proj: np.ndarray, morph: dict[int, dict[int, float]],
-               light_dir=(-0.35, 0.55, 0.76), deform: dict | None = None) -> QImage:
+               light_dir=(-0.35, 0.55, 0.76), deform: dict | None = None,
+               squeeze: tuple | None = None) -> QImage:
         m = self.m
         self.ctx.makeCurrent(self.surface)
         self.fbo.bind()
@@ -355,6 +367,10 @@ class VrmRenderer:
         gl.glUniform3f(self.loc("uLightDir"), *(ld / np.linalg.norm(ld)))
         gl.glUniform1f(self.loc("uAspect"), self.w / self.h)
         gl.glUniform1f(self.loc("uRealism"), self.realism)
+        c, r, a = squeeze if squeeze else ((0.0, 0.0, 0.0), 0.1, 0.0)
+        gl.glUniform3f(self.loc("uSqzCenter"), float(c[0]), float(c[1]), float(c[2]))
+        gl.glUniform1f(self.loc("uSqzRadius"), float(r))
+        gl.glUniform1f(self.loc("uSqzAmount"), float(a))
         gl.glUniform1i(self.loc("uDeform"), 1 if deform else 0)
         if deform:
             gl.glUniform1f(self.loc("uNeck"), deform["neck"])
