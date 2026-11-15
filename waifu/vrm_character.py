@@ -15,7 +15,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap, QRadialGradient
 
-from .sprites import DRAG, FALL, IDLE, PET, REACT, SIT, SLEEP, WALK, FrameContext, _heart, _pen
+from .sprites import DRAG, FALL, IDLE, PET, REACT, SIT, SLEEP, WALK, FrameContext, _heart, _pen, draw_steam
 from .vrm.math3d import (IDENTITY_Q, normalize, ortho, q_axis, q_euler, q_from_vectors, q_inv,
                          q_mul, q_rotate, q_slerp, q_to_m3, rot_m4, translate)
 from .vrm.model import R180, VrmModel
@@ -32,6 +32,7 @@ EMOTION_EXPR = {
     "hurt": {"sad": 0.85, "angry": 0.2},
     "flustered": {"surprised": 0.35, "relaxed": 0.35}, "playful": {"happy": 0.6, "ih": 0.2},
     "struggling": {"surprised": 0.55, "angry": 0.3, "aa": 0.35},
+    "pout": {"angry": 0.3, "ou": 0.6},
 }
 ARM_DOWN = 77.0
 
@@ -137,7 +138,7 @@ class VrmCharacter:
         self.look = [0.0, 0.0]
         self._look_target = [0.0, 0.0]
         self.timers = {"eye_shut": 0.0, "blush": 0.0, "lean": 0.0, "jerk": 0.0, "wave_l": 0.0, "wave_r": 0.0,
-                       "tears": 0.0}
+                       "tears": 0.0, "steam": 0.0}
         self.lean_sign = 1.0
         self._tug_hand: tuple[str, QPointF] | None = None
         self._pinned: list = []
@@ -205,6 +206,7 @@ class VrmCharacter:
             z.append((side, p, 0.024 * k))
         for side, sx in (("cheek_l", 1), ("cheek_r", -1)):
             z.append((side, hc + self._canon((sx * 0.048, -0.045, 0.065)), 0.026 * k))
+        z.insert(0, ("nose", hc + self._canon((0, -0.032, 0.088)), 0.014 * k))
         z.append(("mouth", hc + self._canon((0, -0.062, 0.07)), 0.02 * k))
         for side, bone in (("hand_l", "leftHand"), ("hand_r", "rightHand")):
             p = m.bone_pos(W, bone)
@@ -283,6 +285,17 @@ class VrmCharacter:
         if zone == "mouth":
             self.timers["blush"] = 3.0
             self.timers["jerk"] = -0.3
+            return
+        if zone in ("nose", "eye_l", "eye_r") and kind != "pet":
+            self.timers["eye_shut"] = 0.45 if zone == "nose" else 0.9   # instant blink / squint
+            self.timers["jerk"] = 0.45                                   # startled recoil
+            return
+        if zone in ("chest", "skirt"):
+            self.timers["blush"] = 4.0
+            if kind != "pet":                     # rough / sudden: flustered recoil + steam
+                self.timers["lean"] = 1.0
+                self.lean_sign = 0.0 if zone == "chest" else side
+                self.timers["steam"] = 3.0
             return
         if zone in ("eye_l", "eye_r"):
             self.timers["eye_shut"] = 1.3
@@ -805,6 +818,8 @@ class VrmCharacter:
                 p.setBrush(g)
                 p.drawEllipse(QPointF(cx, cy), r, r * 0.6)
         top = self.project(hc + self._canon((0, 0.13, 0)))
+        if self.timers["steam"] > 0 or ctx.emotion == "flustered":
+            draw_steam(p, top[0], top[1] + 4, t, 0.9)
         if ctx.struggle > 0.3:   # flailing: sweat drops and little motion marks
             for i, sx in enumerate((1, -1)):
                 ph = (t * 2.2 + i * 0.5) % 1.0

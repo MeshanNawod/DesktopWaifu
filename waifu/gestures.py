@@ -3,8 +3,9 @@
     CLICK   short press and release          -> gentle touch (soft smile, sweet greeting)
     HOLD    press and keep holding still      -> firm press / hit ("hayiyen gahanawa"): startled, hurt
     DOUBLE  double click                      -> petting ("athaganawa"): happy closed eyes, blush
-    STROKE  press-and-rub on head/face/hair,  -> petting too (each ~220 px of rubbing counts as one stroke)
-            or hovering back and forth
+    STROKE  press-and-rub on head/face,       -> petting too (each ~220 px of rubbing counts as one stroke)
+            or hovering back and forth over head, face, hair or a sensitive area
+    PULL    press on her hair / scarf and drag -> pulling: she pouts "don't pull my hair!"
     LIFT    press on a hand/leg/body and drag -> she's lifted (by that limb) and struggles
 
 The listener only classifies; the character window decides what each gesture does.
@@ -14,10 +15,13 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, QPointF, QTimer, Signal
 from PySide6.QtWidgets import QApplication
 
-CLICK, HOLD, DOUBLE, STROKE = "click", "hold", "double", "stroke"
+CLICK, HOLD, DOUBLE, STROKE, PULL = "click", "hold", "double", "stroke", "pull"
 LIMBS = {"hand_l", "hand_r", "hand_face", "hand_low", "leg_l", "leg_r"}
 # pressing and moving on these zones strokes her instead of picking her up
-STROKE_ZONES = {"head", "hair_l", "hair_r", "cheek_l", "cheek_r", "mouth", "eye_l", "eye_r"}
+STROKE_ZONES = {"head", "cheek_l", "cheek_r", "mouth", "nose", "eye_l", "eye_r"}
+# pressing and dragging these pulls them (hair springs follow the cursor)
+PULL_ZONES = {"hair_l", "hair_r", "scarf"}
+PULL_PX = 30.0
 LIMB_ALIAS = {"hand_face": "hand_l", "hand_low": "hand_r"}
 
 HOLD_SECONDS = 0.55
@@ -58,12 +62,16 @@ class GestureListener(QObject):
             self.moved = True
             self._hold.stop()
             self._single.stop()
-            self.mode = "stroke" if self.zone in STROKE_ZONES else "lift"
+            self.mode = "stroke" if self.zone in STROKE_ZONES else "pull" if self.zone in PULL_ZONES else "lift"
         if self.moved and self.mode == "stroke":
             self._stroke += (gpos - self._last).manhattanLength()
             if self._stroke >= STROKE_PX:
                 self._stroke = 0.0
                 self.gesture.emit(STROKE, self.zone)
+        pulled = (gpos - self._press).manhattanLength() >= PULL_PX
+        if self.moved and self.mode == "pull" and not self.consumed and pulled:
+            self.consumed = True
+            self.gesture.emit(PULL, self.zone)
         self._last = QPointF(gpos)
         return self.mode if self.moved else None
 

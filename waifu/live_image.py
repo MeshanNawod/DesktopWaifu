@@ -28,7 +28,7 @@ from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import (QColor, QFont, QImage, QPainter, QPainterPath, QPixmap,
                            QRadialGradient, QTransform)
 
-from .sprites import DRAG, FALL, IDLE, PET, REACT, SIT, SLEEP, WALK, FrameContext, _heart, _pen
+from .sprites import DRAG, FALL, IDLE, PET, REACT, SIT, SLEEP, WALK, FrameContext, _heart, _pen, draw_steam
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ except Exception:  # optional: falls back to a slower numpy warp
     _cv2 = None
 
 # hit-test priority: small precise zones first
-ZONE_ORDER = ["eye_l", "eye_r", "mouth", "cheek_l", "cheek_r", "hand_face", "hand_low", "head",
+ZONE_ORDER = ["eye_l", "eye_r", "nose", "mouth", "cheek_l", "cheek_r", "hand_face", "hand_low", "head",
               "chest", "scarf", "skirt", "hair_l", "hair_r"]
 TUGGABLE = {"hand_face", "hand_low", "scarf", "hair_l", "hair_r", "skirt"}
 FMT = QImage.Format.Format_RGBA8888_Premultiplied
@@ -113,7 +113,8 @@ class LiveImageCharacter:
         self._xf = QTransform().translate(self.mx, self.mt)
         self.look = [0.0, 0.0]
         self._look_target = [0.0, 0.0]
-        self.timers = {"eye_shut": 0.0, "squint": 0.0, "wink": 0.0, "happy": 0.0, "blush": 0.0, "tears": 0.0}
+        self.timers = {"eye_shut": 0.0, "squint": 0.0, "wink": 0.0, "happy": 0.0, "blush": 0.0, "tears": 0.0,
+                       "steam": 0.0}
         self._t = 0.0
         self._tugged: set[str] = set()
         self._build(dpr)
@@ -280,6 +281,15 @@ class LiveImageCharacter:
             self.timers["happy"] = 1.2
             b["head"].kick(0, -0.08 * rh)
             return
+        if zone in ("nose", "eye_l", "eye_r") and kind != "pet":
+            self.timers["eye_shut"] = 0.45 if zone == "nose" else 1.0   # blink / squint
+            b["head"].kick(0, -0.3 * rh)                                 # startled recoil
+            b["lean"].kick(-side * 20, 0)
+            return
+        if zone in ("chest", "skirt") and kind == "pet":
+            self.timers["blush"] = 4.0
+            self.timers["happy"] = 1.5
+            return
         if zone in ("eye_l", "eye_r"):
             self.timers["eye_shut"] = 1.3
             b["head"].kick(0, -0.25 * rh)
@@ -311,7 +321,8 @@ class LiveImageCharacter:
         elif zone == "chest":
             b["lean"].kick(-35 if random.random() < 0.5 else 35, 0)
             b["head"].kick(0, -0.15 * rh)
-            self.timers["blush"] = 3.0
+            self.timers["blush"] = 4.0
+            self.timers["steam"] = 3.0
         else:  # body / arm poke
             b["lean"].kick(side * 18, 0)
             b["hair_l"].kick(side * 0.2 * rh, 0)
@@ -648,6 +659,8 @@ class LiveImageCharacter:
     def _draw_screen_fx(self, p: QPainter, state: str, ctx: FrameContext) -> None:
         t = ctx.t
         top = self._xf.map(self._img_pt(0.47, 0.04))
+        if self.timers["steam"] > 0 or ctx.emotion == "flustered":
+            draw_steam(p, top.x(), top.y() + 4, t, 1.0)
         if ctx.pet_level > 0:
             for i in range(3):
                 ph = (t * 0.7 + i / 3) % 1.0

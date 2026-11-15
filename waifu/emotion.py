@@ -118,14 +118,23 @@ class EmotionEngine(QObject):
             self.wake(gentle=kind != "rough")
             if kind != "rough":
                 return Reaction("happy", "wake_gentle", 3, 0.5, woke=True)
-        if zone in TOUCHY_ZONES and kind != "rough":
-            # teasing / sensitive touch: flustered, not hurt. How she takes it depends on how close you are.
+        if zone in TOUCHY_ZONES:
+            # sensitive areas are context-aware:
+            #  a gentle stroke (when she trusts you) -> sweet shy smile, affection up
+            #  sudden taps / presses / hits         -> extreme blush, flustered recoil, scolding
+            if kind == "pet" and self.affection >= 35:
+                self._adjust(3, 1.5)
+                self._flavour("shy", 20)
+                return Reaction("shy", "sensitive_stroke", 3, 1.5, woke)
             close = self.affection >= 65
-            self._adjust(-1 if close else -4, 0 if close else -2)
-            self._flavour("flustered", 20)
-            key = "sensitive_playful" if close and random.random() < 0.5 else \
-                "sensitive_shy" if close or self.affection >= 40 else "sensitive_defensive"
+            self._adjust(-3 if close else -6, -1 if close else -3)
+            self._flavour("flustered", 25)
+            key = "sensitive_playful" if close and kind != "rough" and random.random() < 0.4 else "sensitive_scold"
             return Reaction("flustered", key, 0, 0, woke)
+        if zone in ("eyes", "nose") and kind in ("gentle", "tap"):
+            # poke in the eye / nose: instant blink, startled recoil, cute warning (doesn't hurt like a hit)
+            self._adjust(-1.5, 0)
+            return Reaction("surprised", f"{zone}_poke", -1.5, 0, woke)
         if kind == "rough":
             self._hits = [t for t in self._hits if now - t < 20] + [now]
             hurt = -12 if zone == "eyes" else -9
@@ -136,14 +145,16 @@ class EmotionEngine(QObject):
             self._set(HURT, 25 + 15 * len(self._hits))
             return Reaction("hurt", f"{zone}_rough" if len(self._hits) < 3 else "hurt_repeat", hurt, 0, woke)
         if kind == "tug" and zone in ("hair", "scarf"):
-            self._adjust(-2, 0)
-            return Reaction("surprised", f"{zone}_tug", -2, 0, woke)
+            # pulling her hair: a cute, slightly pouting "ouch, don't pull!"
+            self._adjust(-3, -0.5)
+            self._flavour("upset", 8)
+            return Reaction("pout", f"{zone}_tug", -3, -0.5, woke)
         # pet (double click / stroking) > gentle (short click) > tap
         gain = {"pet": 6.0, "gentle": 3.0}.get(kind, 2.0)
         aff = (3.0 if kind == "pet" else 1.0 if kind in ("gentle", "tug") else 0.5) if zone in NICE_ZONES else \
             (1.0 if kind == "pet" else 0.0)
-        if zone == "eyes":
-            gain, aff = 0.0, 0.0
+        if zone in ("eyes", "nose"):
+            gain, aff = 1.0, 0.0
         self._adjust(gain, aff)
         if zone == "head":
             self.mem.bump("pats")

@@ -17,7 +17,7 @@ from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap, QRadialGradient
 
 from .fbx.mesh import load_fbx_mesh
-from .sprites import DRAG, FALL, IDLE, PET, REACT, SIT, SLEEP, WALK, FrameContext, _heart, _pen
+from .sprites import DRAG, FALL, IDLE, PET, REACT, SIT, SLEEP, WALK, FrameContext, _heart, _pen, draw_steam
 from .vrm.math3d import ortho, q_axis, q_mul, q_rotate, q_to_m3, rot_m4, translate
 from .vrm.model import Material, Node, Prim
 from .vrm.renderer import VrmRenderer
@@ -113,7 +113,7 @@ class MeshCharacter:
         self.squash_v = 0.0
         self.head_kick = np.zeros(2)
         self.head_kick_v = np.zeros(2)
-        self.timers = {"eye_shut": 0.0, "blush": 0.0, "tears": 0.0, "happy": 0.0}
+        self.timers = {"eye_shut": 0.0, "blush": 0.0, "tears": 0.0, "happy": 0.0, "steam": 0.0}
         self._press_local = QPointF()
         self._tug_hand = None
         self._grab_blend = 0.0
@@ -207,6 +207,7 @@ class MeshCharacter:
     def _zones(self):
         h = self.m.height
         z = [("eye_l", self._face_pt(0.022, 0.012), 0.016 * h), ("eye_r", self._face_pt(-0.022, 0.012), 0.016 * h),
+             ("nose", self._face_pt(0.0, -0.012), 0.011 * h),
              ("mouth", self._face_pt(0.0, -0.03), 0.014 * h),
              ("cheek_l", self._face_pt(0.03, -0.012), 0.016 * h), ("cheek_r", self._face_pt(-0.03, -0.012), 0.016 * h)]
         for side, p in self.hands.items():
@@ -256,6 +257,16 @@ class MeshCharacter:
             self.head_kick_v += np.array([s * 120.0, -160.0])
             self.bend_v += np.array([s * 0.6, -0.5])
             self.squash_v += 0.6
+            return
+        if zone in ("nose", "eye_l", "eye_r") and kind != "pet":
+            self.timers["eye_shut"] = 0.45 if zone == "nose" else 0.9   # blink / squint
+            self.head_kick_v += np.array([0.0, -140.0])                  # recoil
+            return
+        if zone in ("chest", "skirt"):
+            self.timers["blush"] = 4.0
+            if kind != "pet":
+                self.timers["steam"] = 3.0
+                self.bend_v += np.array([0.0, -0.6])                      # flustered recoil backwards
             return
         if zone in ("cheek_l", "cheek_r", "mouth", "hand_l", "hand_r"):
             self.timers["blush"] = 3.0
@@ -477,6 +488,8 @@ class MeshCharacter:
                 p.setBrush(QColor(140, 200, 255, int(230 * (1 - slide))))
                 p.drawEllipse(QPointF(x, y), 2.2, 3.0)
         top = self.project(self._world(self.head_c + np.array([0, self.head_r * 1.4, 0])))
+        if self.timers["steam"] > 0 or ctx.emotion == "flustered":
+            draw_steam(p, top[0], top[1] + 6, t, 0.9)
         if ctx.emotion == "angry":
             x, y = top[0] - 16, top[1] + 10
             p.setPen(_pen(QColor("#ff3b3b"), 2.2))

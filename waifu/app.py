@@ -38,7 +38,7 @@ REMEMBER_RE = re.compile(r"^\s*(?:please\s+)?remember(?: that)?\s+(.+)$", re.I)
 
 ZONE_GROUP = {"eye_l": "eyes", "eye_r": "eyes", "cheek_l": "cheek", "cheek_r": "cheek",
               "hand_l": "hand", "hand_r": "hand", "hand_face": "hand", "hand_low": "hand",
-              "hair_l": "hair", "hair_r": "hair", "leg_l": "legs", "leg_r": "legs"}
+              "hair_l": "hair", "hair_r": "hair", "leg_l": "legs", "leg_r": "legs", "nose": "nose"}
 TOUCH_DESC = {
     ("head", "gentle"): "gently stroked your head", ("head", "tap"): "patted your head",
     ("head", "rough"): "hit you on the head", ("hand", "gentle"): "is holding your hand",
@@ -56,6 +56,9 @@ TOUCH_DESC = {
     ("hair", "pet"): "is stroking your hair", ("body", "pet"): "is petting you",
     ("legs", "pet"): "is stroking your leg", ("legs", "rough"): "pressed hard on your leg",
     ("legs", "gentle"): "lightly touched your leg",
+    ("nose", "gentle"): "poked your nose", ("nose", "rough"): "jabbed your nose hard",
+    ("nose", "pet"): "gently booped your nose", ("eyes", "gentle"): "poked you in the eye",
+    ("chest", "pet"): "gently stroked you near your chest", ("skirt", "pet"): "gently stroked your skirt",
 }
 
 
@@ -90,6 +93,8 @@ class WaifuApp(QObject):
         c.moved.connect(self._follow)
         c.touched.connect(self.on_touch)
         c.picked_up.connect(self._on_pickup)
+        c.broke_free.connect(lambda: (self.emotion.released(), setattr(self, "_last_quip", 0.0),
+                                      self._quip("broke_free", "playful")))
         c.dropped.connect(self._on_drop)
         c.double_clicked.connect(self.toggle_chat)
         c.menu_requested.connect(self._show_menu)
@@ -237,12 +242,12 @@ class WaifuApp(QObject):
         if use_ai:
             self._last_ai_touch = self._last_quip = now
             user = self.cfg.user_name or "the user"
-            feel = ("painful, a hard press" if kind == "rough" else "teasing and embarrassing"
-                    if group in ("skirt", "chest") else "loving and soothing")
+            feel = ("painful, a hard press" if kind == "rough" else "loving and gentle" if kind == "pet"
+                    else "sudden, teasing and embarrassing" if group in ("skirt", "chest") else "nice")
             self.brain.ask(f"(Touch: {user} {desc}. It felt {feel}. "
                            "React in one short line, with a cute voice.)", event=True)
             return
-        if now - self._last_quip < (0.8 if kind == "rough" else 2.5):
+        if now - self._last_quip < (0.6 if kind in ("rough", "gentle", "tug") else 1.5):
             return
         self._last_quip = now
         self.say(line(r.line), r.emotion)
@@ -256,6 +261,8 @@ class WaifuApp(QObject):
 
     def _on_drop(self, impact: float) -> None:
         self.emotion.released()
+        if self.character._broke_free:      # she jumped out of your hand: her "I'm free!" line stands
+            return
         self.character.set_mood(self.emotion.mood_label())
         self._last_quip = 0.0
         self._quip("drop_hard" if impact > 900 else "put_down", "sad" if impact > 900 else "flustered", chance=0.7)

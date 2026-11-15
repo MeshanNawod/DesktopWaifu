@@ -97,6 +97,20 @@ def _heart(p: QPainter, x: float, y: float, s: float, color: QColor) -> None:
     p.drawPath(path)
 
 
+def draw_steam(p: QPainter, x: float, y: float, t: float, scale: float = 1.0) -> None:
+    """Little puffs of steam rising from her head: extreme embarrassment."""
+    p.save()
+    for i in range(3):
+        ph = (t * 1.1 + i / 3) % 1.0
+        col = QColor(255, 255, 255, int(200 * (1 - ph)))
+        p.setPen(_pen(QColor(255, 160, 190, int(160 * (1 - ph))), 1.2))
+        p.setBrush(col)
+        sx = (i - 1) * 12 * scale + math.sin(t * 3 + i) * 3
+        r = (4 + ph * 5) * scale
+        p.drawEllipse(QPointF(x + sx, y - ph * 26 * scale), r, r * 0.8)
+    p.restore()
+
+
 class ProceduralSprites:
     def __init__(self, scale: float = 1.0, style: str = "scarf"):
         self.scale = max(0.4, min(3.0, scale))

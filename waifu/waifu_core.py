@@ -16,8 +16,8 @@ from PySide6.QtGui import QBitmap, QCursor, QGuiApplication, QImage, QPainter, Q
 from PySide6.QtWidgets import QApplication, QWidget
 
 from .config import Config
-from .expressions import EMOTION_MOOD, ExpressionEngine
-from .gestures import CLICK, HOLD, LIMB_ALIAS, LIMBS, GestureListener
+from .expressions import EMOTION_MOOD, ExpressionEngine, build
+from .gestures import CLICK, HOLD, LIMB_ALIAS, LIMBS, PULL, GestureListener
 from .sprites import (DRAG, FALL, IDLE, PET, REACT, SIT, SLEEP, WALK, FrameContext,
                       load_sprites)
 
@@ -30,6 +30,9 @@ ZONE_EMOTION = {
     "mouth": "shy", "head": "happy",
 }
 SOFT_ZONES = {"head", "cheek_l", "cheek_r", "hand_face", "hand_low", "hand_l", "hand_r", "mouth"}
+# hovering back and forth over these counts as stroking too (hair, and sensitive areas: gentle = shy smile)
+STROKE_HOVER = SOFT_ZONES | {"hair_l", "hair_r", "chest", "skirt"}
+BREAK_FREE_AFTER = (4.0, 7.5)   # seconds dangling from a limb before she wriggles loose
 GRAVITY = 2600.0      # px/s^2
 TICK_MS = 33          # ~30 fps
 SLEEP_AFTER = 240.0   # seconds without interaction before she may nap
@@ -41,6 +44,7 @@ class CharacterWindow(QWidget):
     poked = Signal()
     touched = Signal(str)            # zone name, e.g. "eye_l", "scarf:tug"
     picked_up = Signal(str)          # what she was grabbed by: hand_l, hand_r, leg_l, leg_r or body
+    broke_free = Signal()            # she wriggled out of a limb grab
     dropped = Signal(float)          # impact speed
     double_clicked = Signal()
     menu_requested = Signal(QPoint)
@@ -79,6 +83,10 @@ class CharacterWindow(QWidget):
         self._cursor_hist: deque[tuple[float, QPointF]] = deque(maxlen=40)
         self.sulking = False
         self._press_local = QPointF()
+        self._pulling = False
+        self._broke_free = False
+        self._lift_t = 0.0
+        self._free_after = 1e9
         self.gestures = GestureListener(self)
         self.gestures.gesture.connect(self._on_gesture)
         self.mood_label = "neutral"
@@ -136,6 +144,8 @@ class CharacterWindow(QWidget):
         self._emotion_left = seconds
         if emotion and emotion != "neutral":
             self.ctx.expr = self.expressions.snap(EMOTION_MOOD.get(emotion, self.mood_label))
+            if emotion == "pout":   # a proper pout: side glance + pouting lips
+                self.ctx.expr = self.expressions.current = build("side_glance", "pout", random.choice((-1.0, 1.0)))
 
     def set_mood(self, label: str) -> None:
         """Her mood label from the emotion engine: happy, shy, flustered, sleepy, upset, playful, neutral."""
@@ -237,8 +247,11 @@ class CharacterWindow(QWidget):
         ctx.pet_level = max(0.0, ctx.pet_level - dt * 0.5)
         ctx.beat = max(0.0, ctx.beat - dt * 4.0)
         # struggling settles to a steady wriggle while she's held, and stops once she's down
-        base = 0.4 if self.state == DRAG else 0.0
+        held = time.monotonic() - self._lift_t if self.state == DRAG else 0.0
+        base = (0.4 + min(0.5, held * 0.12) if ctx.grab else 0.4) if self.state == DRAG else 0.0
         ctx.struggle += (base - ctx.struggle) * min(1.0, dt * (0.8 if self.state == DRAG else 3.0))
+        if self.state == DRAG and ctx.grab and held > self._free_after:
+            self._break_free()
         mood = "sleepy" if self.state == SLEEP else self.mood_label
         ctx.expr = self.expressions.update(dt, mood, ctx.emotion if self._emotion_left > 0 else None)
         self._rub = max(0.0, self._rub - dt * 120)
@@ -344,7 +357,9 @@ class CharacterWindow(QWidget):
     def _on_gesture(self, kind: str, zone: str) -> None:
         if self.state in (DRAG, FALL):
             return
-        if kind == CLICK:
+        if kind == PULL:
+            self.touch(zone, "tug")         # pulling her hair / scarf: pouty "don't pull!"
+        elif kind == CLICK:
             self.touch(zone, "gentle")      # short press: soft smile, sweet greeting
         elif kind == HOLD:
             self.touch(zone, "rough")       # long firm press: it hurts / startles her
@@ -371,7 +386,11 @@ class CharacterWindow(QWidget):
         self._cursor_hist.append((time.perf_counter(), gp))
         if self._pressed:
             mode = self.gestures.move(gp)
-            if mode == "lift" and not self._dragging:
+            if mode == "pull" and hasattr(self.sprites, "tug"):
+                self._pulling = True
+                self.sprites.tug(self._press_zone, gp - self._press_global)
+                return
+            if mode == "lift" and not self._dragging and not self._broke_free:
                 self._start_lift(self._press_zone)
             if self._dragging:
                 now = time.perf_counter()
@@ -393,10 +412,10 @@ class CharacterWindow(QWidget):
 
         # hovering: slowly stroking back and forth over her head / face = petting
         zone = self._zone_at(e.position())
-        soft = zone in SOFT_ZONES
+        soft = zone in STROKE_HOVER
         self.setCursor(Qt.CursorShape.OpenHandCursor if soft or zone in LIMBS else Qt.CursorShape.ArrowCursor)
-        if zone in ("eye_l", "eye_r") and hasattr(self.sprites, "squint"):
-            self.sprites.squint(True)
+        if zone in ("eye_l", "eye_r", "nose") and hasattr(self.sprites, "squint"):
+            self.sprites.squint(True)   # she squints when your cursor comes near her eyes / nose
         if soft and zone == self._hover_zone and self._last_hover is not None:
             self._rub += (e.position() - self._last_hover).manhattanLength()
             if self._rub > 260 * self.cfg.scale:
@@ -412,6 +431,8 @@ class CharacterWindow(QWidget):
         limb = LIMB_ALIAS.get(zone, zone) if zone in LIMBS else ""
         self.ctx.grab = limb
         self.ctx.struggle = 0.35
+        self._lift_t = time.monotonic()
+        self._free_after = random.uniform(*BREAK_FREE_AFTER) if limb else 1e9
         if limb:
             # hold her from near the top of the window so her body can hang below the grabbed limb
             # keep the grabbed limb on the side it was on, so her body hangs centred in the window
@@ -428,11 +449,28 @@ class CharacterWindow(QWidget):
         self.setCursor(Qt.CursorShape.ClosedHandCursor)
         self.picked_up.emit(limb or "body")
 
+    def _break_free(self) -> None:
+        """She wriggles out of your grip and drops (until you let go and grab her again)."""
+        self._dragging = False
+        self._broke_free = True
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.vx = random.choice((-1, 1)) * random.uniform(150, 350)
+        self.vy = -random.uniform(250, 450)          # a little hop out of your hand
+        self.ctx.grab = ""
+        self.ctx.tilt = 0.0
+        self._set_state(FALL)
+        self.broke_free.emit()
+
     def mouseReleaseEvent(self, e) -> None:
         if e.button() != Qt.MouseButton.LeftButton or not self._pressed:
             return
         self._pressed = False
         self.gestures.release()
+        self._broke_free = False
+        if self._pulling:
+            self._pulling = False
+            self.sprites.tug(self._press_zone, None)     # let go: the hair springs back
+            return
         if self._dragging:
             self._dragging = False
             self.setCursor(Qt.CursorShape.ArrowCursor)
