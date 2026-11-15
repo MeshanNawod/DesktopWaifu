@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from .config import Config
 from .expressions import EMOTION_MOOD, ExpressionEngine
+from .gestures import CLICK, HOLD, LIMB_ALIAS, LIMBS, GestureListener
 from .sprites import (DRAG, FALL, IDLE, PET, REACT, SIT, SLEEP, WALK, FrameContext,
                       load_sprites)
 
@@ -29,9 +30,6 @@ ZONE_EMOTION = {
     "mouth": "shy", "head": "happy",
 }
 SOFT_ZONES = {"head", "cheek_l", "cheek_r", "hand_face", "hand_low", "hand_l", "hand_r", "mouth"}
-SMACK_SPEED = 2200.0      # px/s cursor speed at the moment of the click = a hit
-ROUGH_RUB_SPEED = 2600.0  # frantic scrubbing instead of stroking
-HOLD_TIME = 0.45          # long soft press = gentle
 GRAVITY = 2600.0      # px/s^2
 TICK_MS = 33          # ~30 fps
 SLEEP_AFTER = 240.0   # seconds without interaction before she may nap
@@ -42,7 +40,7 @@ class CharacterWindow(QWidget):
     petted = Signal()
     poked = Signal()
     touched = Signal(str)            # zone name, e.g. "eye_l", "scarf:tug"
-    picked_up = Signal()
+    picked_up = Signal(str)          # what she was grabbed by: hand_l, hand_r, leg_l, leg_r or body
     dropped = Signal(float)          # impact speed
     double_clicked = Signal()
     menu_requested = Signal(QPoint)
@@ -76,17 +74,13 @@ class CharacterWindow(QWidget):
         self._drag_samples: deque[tuple[float, QPointF]] = deque(maxlen=8)
         self._rub = 0.0
         self._last_hover: QPointF | None = None
-        self._click_timer = QTimer(self, singleShot=True)
-        self._click_timer.timeout.connect(self._single_click)
         self._press_zone: str | None = None
         self._hover_zone: str | None = None
-        self._tugging = False
         self._cursor_hist: deque[tuple[float, QPointF]] = deque(maxlen=40)
-        self._press_times: deque[float] = deque(maxlen=8)
-        self._press_t = 0.0
-        self._press_speed = 0.0
-        self._hit_mode = False
         self.sulking = False
+        self._press_local = QPointF()
+        self.gestures = GestureListener(self)
+        self.gestures.gesture.connect(self._on_gesture)
         self.mood_label = "neutral"
         self.expressions = ExpressionEngine()
         self._prev_pos = (0.0, 0.0)
@@ -242,6 +236,9 @@ class CharacterWindow(QWidget):
                 ctx.emotion = "neutral"
         ctx.pet_level = max(0.0, ctx.pet_level - dt * 0.5)
         ctx.beat = max(0.0, ctx.beat - dt * 4.0)
+        # struggling settles to a steady wriggle while she's held, and stops once she's down
+        base = 0.4 if self.state == DRAG else 0.0
+        ctx.struggle += (base - ctx.struggle) * min(1.0, dt * (0.8 if self.state == DRAG else 3.0))
         mood = "sleepy" if self.state == SLEEP else self.mood_label
         ctx.expr = self.expressions.update(dt, mood, ctx.emotion if self._emotion_left > 0 else None)
         self._rub = max(0.0, self._rub - dt * 120)
@@ -343,101 +340,98 @@ class CharacterWindow(QWidget):
             return self.sprites.zone_at(pos) or "body"
         return "head" if self._head_rect_local().contains(pos) else "body"
 
-    # gesture classification -------------------------------------------------
-    def _cursor_speed(self, window: float = 0.08) -> float:
-        """Cursor speed (px/s) over the last `window` seconds: how hard a click 'lands'."""
-        now = time.perf_counter()
-        pts = [(t, p) for t, p in self._cursor_hist if now - t <= window]
-        if len(pts) < 2:
-            return 0.0
-        (t0, p0), (t1, p1) = pts[0], pts[-1]
-        return (p1 - p0).manhattanLength() / max(1e-3, t1 - t0)
-
-    def _recent_presses(self, window: float = 1.0) -> int:
-        now = time.monotonic()
-        return sum(1 for t in self._press_times if now - t <= window)
+    # mouse -> gesture listener ------------------------------------------------
+    def _on_gesture(self, kind: str, zone: str) -> None:
+        if self.state in (DRAG, FALL):
+            return
+        if kind == CLICK:
+            self.touch(zone, "gentle")      # short press: soft smile, sweet greeting
+        elif kind == HOLD:
+            self.touch(zone, "rough")       # long firm press: it hurts / startles her
+        else:
+            self.touch(zone, "pet")         # double click or stroking: petting
 
     def mousePressEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.MiddleButton:
+            self.double_clicked.emit()      # middle click opens / closes the chat
+            return
         if e.button() != Qt.MouseButton.LeftButton:
             return
-        now = time.monotonic()
-        self.last_interaction = now
+        self.last_interaction = time.monotonic()
         self._pressed = True
         self._dragging = False
-        self._tugging = False
         self._press_global = e.globalPosition()
         self._grab_offset = e.globalPosition() - QPointF(self.px, self.py)
         self._press_zone = self._zone_at(e.position())
-        self._press_t = now
-        self._press_speed = self._cursor_speed()
-        self._press_times.append(now)
-        # several quick clicks in a row = hitting her
-        if self._recent_presses(1.0) >= 3:
-            self._click_timer.stop()
-            self._hit_mode = True
-            self.touch(self._press_zone, "rough")
+        self._press_local = e.position()
+        self.gestures.press(self._press_zone, e.globalPosition())
 
     def mouseMoveEvent(self, e) -> None:
         gp = e.globalPosition()
         self._cursor_hist.append((time.perf_counter(), gp))
         if self._pressed:
-            delta = gp - self._press_global
-            dist = delta.manhattanLength()
-            if not self._dragging and self._press_zone in TUGGABLE and hasattr(self.sprites, "tug"):
-                # hold and pull a hand / her scarf / hair / skirt; pull further to drag her along
-                if dist < TUG_RANGE:
-                    if dist > 4:
-                        self._tugging = True
-                        self.sprites.tug(self._press_zone, delta)
-                    return
-                if self._tugging:
-                    self.sprites.tug(self._press_zone, None)
-                    self._tugging = False
-            if not self._dragging and dist > 6:
-                self._dragging = True
-                self._hit_mode = False
-                self._drag_samples.clear()
-                self._set_state(DRAG, emotion="surprised")
-                self.setCursor(Qt.CursorShape.ClosedHandCursor)
-                self.picked_up.emit()
+            mode = self.gestures.move(gp)
+            if mode == "lift" and not self._dragging:
+                self._start_lift(self._press_zone)
             if self._dragging:
                 now = time.perf_counter()
                 self._drag_samples.append((now, gp))
-                target = gp - self._grab_offset
                 inst_vx = 0.0
                 if len(self._drag_samples) >= 2:
                     (t0, p0), (t1, p1) = self._drag_samples[0], self._drag_samples[-1]
                     if t1 - t0 > 1e-3:
                         inst_vx = (p1.x() - p0.x()) / (t1 - t0)
                 self.ctx.vx = inst_vx
-                self.ctx.tilt += (max(-22.0, min(22.0, -inst_vx * 0.03)) - self.ctx.tilt) * 0.3
+                self.ctx.tilt += (max(-35.0, min(35.0, -inst_vx * 0.035)) - self.ctx.tilt) * 0.3
+                # shaking her makes her struggle harder
+                self.ctx.struggle = min(1.0, self.ctx.struggle + abs(inst_vx) * 0.00002)
+                target = gp - self._grab_offset
                 self.px, self.py = target.x(), target.y()
                 self.move(round(self.px), round(self.py))
                 self.moved.emit()
             return
 
-        # hover: slow strokes are loving, frantic scrubbing is rough
+        # hovering: slowly stroking back and forth over her head / face = petting
         zone = self._zone_at(e.position())
         soft = zone in SOFT_ZONES
-        self.setCursor(Qt.CursorShape.OpenHandCursor if soft else Qt.CursorShape.ArrowCursor)
+        self.setCursor(Qt.CursorShape.OpenHandCursor if soft or zone in LIMBS else Qt.CursorShape.ArrowCursor)
         if zone in ("eye_l", "eye_r") and hasattr(self.sprites, "squint"):
-            self.sprites.squint(True)   # she flinches when your cursor gets close to her eyes
+            self.sprites.squint(True)
         if soft and zone == self._hover_zone and self._last_hover is not None:
             self._rub += (e.position() - self._last_hover).manhattanLength()
             if self._rub > 260 * self.cfg.scale:
                 self._rub = 0.0
-                speed = self._cursor_speed(0.3)
-                self.touch(zone, "rough" if speed > ROUGH_RUB_SPEED else "gentle")
+                self.gestures.hover_stroke(zone)
         self._hover_zone = zone
         self._last_hover = e.position()
+
+    def _start_lift(self, zone: str) -> None:
+        """Picked up. Grabbing a hand or leg lifts her by that limb: she dangles from it and struggles."""
+        self._dragging = True
+        self._drag_samples.clear()
+        limb = LIMB_ALIAS.get(zone, zone) if zone in LIMBS else ""
+        self.ctx.grab = limb
+        self.ctx.struggle = 0.35
+        if limb:
+            # hold her from near the top of the window so her body can hang below the grabbed limb
+            side = 0.1 if limb.endswith("_l") else -0.1
+            pin = QPointF(self.width() * (0.5 + side), self.height() * 0.07)
+            self._grab_offset = pin
+            self.ctx.grab_pt = (pin.x(), pin.y())
+            target = self._press_global - pin
+            self.px, self.py = target.x(), target.y()
+            self.move(round(self.px), round(self.py))
+        else:
+            self.ctx.grab_pt = (self._press_local.x(), self._press_local.y())
+        self._set_state(DRAG, emotion="surprised")
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        self.picked_up.emit(limb or "body")
 
     def mouseReleaseEvent(self, e) -> None:
         if e.button() != Qt.MouseButton.LeftButton or not self._pressed:
             return
         self._pressed = False
-        if self._hit_mode:
-            self._hit_mode = False
-            return
+        self.gestures.release()
         if self._dragging:
             self._dragging = False
             self.setCursor(Qt.CursorShape.ArrowCursor)
@@ -450,34 +444,15 @@ class CharacterWindow(QWidget):
             self.vx = max(-2500.0, min(2500.0, vx))
             self.vy = max(-2500.0, min(2500.0, vy))
             self.ctx.tilt = 0.0
+            self.ctx.grab = ""
             self._set_state(FALL)
-        elif self._tugging:
-            self._tugging = False
-            self.sprites.tug(self._press_zone, None)   # let go: it springs back
-            self.touch(self._press_zone, "tug")
-        elif self._press_speed > SMACK_SPEED:
-            self._click_timer.stop()
-            self.touch(self._press_zone, "rough")      # the cursor slammed into her: a smack
-        elif time.monotonic() - self._press_t > HOLD_TIME:
-            self.touch(self._press_zone, "gentle")     # a long, soft press
-        else:
-            self._click_timer.start(QApplication.doubleClickInterval())
 
     def mouseDoubleClickEvent(self, e) -> None:
-        if e.button() != Qt.MouseButton.LeftButton:
-            return
-        self._click_timer.stop()
-        self._pressed = False
-        if self._hit_mode or self._press_speed > SMACK_SPEED * 0.5:
-            self.touch(self._press_zone, "rough")      # fast double-hit, not a "open chat" gesture
-            self._hit_mode = False
-            return
-        self.double_clicked.emit()
-
-    def _single_click(self) -> None:
-        if self.state in (DRAG, FALL):
-            return
-        self.touch(self._press_zone or "body", "tap")
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._pressed = True
+            self._press_global = e.globalPosition()
+            self._grab_offset = e.globalPosition() - QPointF(self.px, self.py)
+            self.gestures.double(self._zone_at(e.position()))
 
     def contextMenuEvent(self, e) -> None:
         self.menu_requested.emit(e.globalPos())
@@ -488,16 +463,16 @@ class CharacterWindow(QWidget):
 
     # ----------------------------------------------------------------- reactions
     def pet(self) -> None:
-        self.touch("head", "gentle")
+        self.touch("head", "pet")
 
     def poke(self) -> None:
-        self.touch("body", "tap")
+        self.touch("body", "gentle")
 
-    def touch(self, zone: str, kind: str = "tap") -> None:
-        """A click, stroke, smack or tug on one part of her body.
+    def touch(self, zone: str, kind: str = "gentle") -> None:
+        """A touch on one part of her body.
 
-        kind: "gentle" (stroke / long press / holding), "tap" (normal click),
-              "rough" (smack, rapid hits, frantic scrubbing), "tug" (hold and pull).
+        kind: "gentle" (short click), "rough" (long firm press), "pet" (double click / stroking),
+              "tug" (legacy: hold-and-pull on a soft part).
         """
         self.last_interaction = time.monotonic()
         if self.state in (DRAG, FALL):
@@ -508,19 +483,21 @@ class CharacterWindow(QWidget):
         if kind == "rough":
             self._set_state(REACT, duration=1.8)
             self.set_emotion("hurt", 5.0)
-        elif zone == "head":
+        elif kind == "pet":
             self.ctx.pet_level = 1.0
-            self._set_state(PET, duration=2.8)
-            self.set_emotion(random.choice(["shy", "happy"]), 4.0)
-            self.petted.emit()
+            self._set_state(PET, duration=3.0)
+            self.set_emotion(random.choice(["shy", "happy"]), 5.0)
+            if zone == "head":
+                self.petted.emit()
         else:
             if zone in SOFT_ZONES:
-                self.ctx.pet_level = max(self.ctx.pet_level, 0.6 if kind == "gentle" else 0.3)
-            self._set_state(REACT, duration=1.6)
-            self.set_emotion(ZONE_EMOTION.get(zone, "surprised"), 4.0)
+                self.ctx.pet_level = max(self.ctx.pet_level, 0.3)
+            self._set_state(REACT, duration=1.4)
+            self.set_emotion("happy" if zone in SOFT_ZONES or zone == "head" else ZONE_EMOTION.get(zone, "surprised"), 3.5)
         self.touched.emit(f"{zone}:{kind}")
         if zone == "body":
             self.poked.emit()
+
 
     # ----------------------------------------------------------------- moods driven by the app
     def go_to_sleep(self) -> None:

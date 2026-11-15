@@ -26,7 +26,7 @@ DEFAULT_SYSTEM = (
 )
 
 EMOTIONS = ["neutral", "happy", "excited", "shy", "flustered", "playful", "sad", "angry", "surprised",
-            "thinking", "sleepy", "hurt"]
+            "thinking", "sleepy", "hurt", "struggling"]
 
 
 @dataclass

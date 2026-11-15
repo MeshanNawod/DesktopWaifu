@@ -42,6 +42,23 @@ LINES: dict[str, list[str]] = {
     "sensitive_playful": ["Mou~ you're such a tease!", "Hehe... you're bold today, aren't you?",
                           "Behave~ ...or don't. Ehehe."],
     "playful": ["Boop me one more time, I dare you~", "Hehe, are you trying to tickle me?"],
+    # petting (double click / stroke)
+    "head_pet": ["Ehehe~ more headpats please...", "Mmm... I could melt like this.", "You're so gentle with me~"],
+    "hand_pet": ["Your hand is so warm... let's stay like this.", "D-don't let go, okay?"],
+    "cheek_pet": ["Ehehe... my cheeks are burning now.", "So soft... that's nice."],
+    "mouth_pet": ["Mmh?! W-what are you doing to my lips...", "S-so bold..."],
+    "eyes_pet": ["Hehe, peekaboo~", "I can't see you like that~"],
+    "hair_pet": ["Do you like my hair? Ehehe~", "That feels nice..."],
+    "body_pet": ["Hehe, that tickles!", "You're so sweet today."],
+    "legs_pet": ["Eek! Ticklish!", "Hey~ that tickles my legs!"],
+    # legs
+    "legs_gentle": ["Hm? My legs?", "Hehe, that tickles!"],
+    "legs_rough": ["Ow! My leg!", "Hey, that hurts!"],
+    # lifted / struggling
+    "struggle_hand": ["Waah! Don't lift me by my arm!", "Put me down~! I'm dangling!", "Kyaa! My arm!"],
+    "struggle_leg": ["Kyaaa! I'm upside down! Put me down!", "My skirt-- I mean, PUT ME DOWN!", "The world is upside down!"],
+    "struggle_body": ["Whoa! Put me down~!", "Wheee! ...No wait, put me down!", "H-hey, careful!"],
+    "put_down": ["Phew... solid ground.", "Don't do that so suddenly!", "My head is spinning..."],
     # state changes
     "sulk_comforted": ["...Hmph. That's not enough to make up for it.", "...I'm still a little mad.", "Sniff... okay, maybe a little better."],
     "forgive": ["...Okay. I forgive you.", "Fine... but be gentle next time, okay?", "Hmph. Apology accepted~"],

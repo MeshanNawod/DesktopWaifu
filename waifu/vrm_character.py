@@ -31,6 +31,7 @@ EMOTION_EXPR = {
     "thinking": {"relaxed": 0.25}, "sleepy": {"relaxed": 0.5, "blink": 0.45}, "neutral": {},
     "hurt": {"sad": 0.85, "angry": 0.2},
     "flustered": {"surprised": 0.35, "relaxed": 0.35}, "playful": {"happy": 0.6, "ih": 0.2},
+    "struggling": {"surprised": 0.55, "angry": 0.3, "aa": 0.35},
 }
 ARM_DOWN = 77.0
 
@@ -106,6 +107,9 @@ class VrmCharacter:
 
     def __init__(self, path: str | Path, scale: float, dpr: float, enhanced: bool = False):
         self.enhanced = enhanced
+        self._grab_blend = 0.0
+        self._grab_last = None
+        self._pin_M = None
         self.gesture: str | None = None
         self.gesture_t = 0.0
         self._next_gesture = random.uniform(6, 12)
@@ -207,6 +211,11 @@ class VrmCharacter:
             if p is not None:
                 mid = m.bone_pos(W, bone.replace("Hand", "MiddleProximal"))
                 z.append((side, (p + mid) / 2 if mid is not None else p, 0.065 * k))
+        for side, pre in (("leg_l", "left"), ("leg_r", "right")):
+            knee, foot = m.bone_pos(W, f"{pre}LowerLeg"), m.bone_pos(W, f"{pre}Foot")
+            if knee is not None and foot is not None:
+                z.append((side, (knee + foot) / 2, 0.075 * k))
+                z.append((side, knee, 0.06 * k))
         z.append(("head", hc, 0.12 * k))
         ch = m.bone_pos(W, "upperChest")
         if ch is None:
@@ -283,11 +292,11 @@ class VrmCharacter:
             self.timers["jerk"] = -0.4   # tilt towards the touch
         elif zone in ("hand_l", "hand_r"):
             self.timers["blush"] = 3.0
-            if self.enhanced and kind == "tap":
+            if self.enhanced and kind in ("tap", "gentle"):
                 self.start_gesture("highfive_l" if zone == "hand_l" else "highfive_r")   # high five!
             else:
                 self.timers["wave_l" if zone == "hand_l" else "wave_r"] = 1.2
-        elif zone == "head" and self.enhanced and kind == "gentle":
+        elif zone == "head" and self.enhanced and kind == "pet":
             self.start_gesture("shy_hands")
         elif zone in ("hair_l", "hair_r"):
             joints = [j for j in self.springs.joints if id(j) in self.hair_springs]
@@ -380,7 +389,14 @@ class VrmCharacter:
             if state == SLEEP:
                 add("neck", _rx(10))
                 add("head", q_mul(_rx(14), _rz(8)))
+        elif state == DRAG and ctx.grab:
+            self._limb_hang_pose(P, add, ctx)
         elif state == DRAG:
+            s = ctx.struggle
+            for side, sgn in (("left", 1), ("right", -1)):
+                add(f"{side}UpperLeg", _rx(math.sin(t * 13 + sgn * 1.6) * 32 * s))
+                add(f"{side}LowerLeg", _rx(15 + (math.sin(t * 13 + sgn * 1.6 + 1) * 0.5 + 0.5) * 35 * s))
+            add("spine", _ry(math.sin(t * 8) * 10 * s))
             for side, sgn in (("left", 1), ("right", -1)):
                 P[f"{side}UpperArm"] = _rz(sgn * (-22 + math.sin(t * 9 + sgn) * 10))
                 P[f"{side}LowerArm"] = _ry(sgn * -25)
@@ -460,6 +476,65 @@ class VrmCharacter:
                 P[f"{side}UpperArm"] = q_from_vectors(rest_dir, d)
                 P[f"{side}LowerArm"] = _ry(-8 if side == "left" else 8)
         return P, hip
+
+    # ------------------------------------------------------------------ lifted by a limb: dangle + struggle
+    def _limb_hang_pose(self, P: dict, add, ctx: FrameContext) -> None:
+        t, s = self.t, max(0.25, ctx.struggle)
+        g = ctx.grab
+        by_leg = g.startswith("leg")
+        held = "left" if g.endswith("_l") else "right"
+        free = "right" if held == "left" else "left"
+        hs = 1 if held == "left" else -1
+        if by_leg:
+            # hanging upside down by one leg: that leg straight, the other kicks, arms flail toward the ground
+            P[f"{held}UpperLeg"] = _rz(hs * 4)
+            P[f"{held}LowerLeg"] = IDENTITY_Q
+            add(f"{free}UpperLeg", _rx(-20 + math.sin(t * 12) * 40 * s))
+            add(f"{free}LowerLeg", _rx(30 + (math.sin(t * 12 + 1) * 0.5 + 0.5) * 50 * s))
+            for side, sgn in (("left", 1), ("right", -1)):
+                P[f"{side}UpperArm"] = _rz(sgn * (70 + math.sin(t * 10 + sgn) * 25 * s))
+                P[f"{side}LowerArm"] = _rz(sgn * (15 + math.sin(t * 13 + sgn) * 25 * s))
+            add("head", _rx(-20 + math.sin(t * 9) * 8 * s))     # looks "up" at the ground, flustered
+        else:
+            # dangling from one hand: that arm straight up, the rest wriggles
+            P[f"{held}UpperArm"] = q_mul(_rx(-6), _rz(hs * 84))
+            P[f"{held}LowerArm"] = _rz(hs * 4)
+            P[f"{free}UpperArm"] = q_mul(_rx(math.sin(t * 9) * 20 * s), _rz(-hs * (-55 + math.sin(t * 11) * 35 * s)))
+            P[f"{free}LowerArm"] = _rz(-hs * (20 + math.sin(t * 13) * 30 * s))
+            for side, sgn in (("left", 1), ("right", -1)):
+                add(f"{side}UpperLeg", _rx(math.sin(t * 13 + sgn * 1.6) * 38 * s))
+                add(f"{side}LowerLeg", _rx(10 + (math.sin(t * 13 + sgn * 1.6 + 1) * 0.5 + 0.5) * 45 * s))
+            add("head", q_mul(_rx(-12), _rz(hs * 10)))           # looks up at the hand holding her
+        add("spine", _ry(math.sin(t * 8) * 14 * s))
+        add("hips", _rz(math.sin(t * 6.5) * 8 * s))
+        add("neck", _ry(math.sin(t * 11) * 12 * s))               # head shaking "no no no"
+
+    def _limb_pin(self, W: np.ndarray, ctx: FrameContext, dt: float) -> np.ndarray:
+        """Move/rotate the whole body so the grabbed hand/foot sits under the cursor and swings."""
+        if ctx.grab:
+            self._grab_last = (ctx.grab, ctx.grab_pt)
+            self._grab_blend = min(1.0, self._grab_blend + dt * 7)
+        else:
+            self._grab_blend = max(0.0, self._grab_blend - dt * 5)
+        self._pin_M = None
+        if self._grab_blend <= 0 or not self._grab_last:
+            return W
+        g, pt = self._grab_last
+        bone = ("leftFoot" if g.endswith("_l") else "rightFoot") if g.startswith("leg") else \
+            ("leftHand" if g.endswith("_l") else "rightHand")
+        limb = self.m.bone_pos(W, bone)
+        if limb is None:
+            return W
+        # cursor point in the world (orthographic camera, at the limb's depth)
+        clip = self._vp @ np.append(limb, 1.0)
+        ndc = np.array([pt[0] / self.W * 2 - 1, 1 - pt[1] / self.H * 2, clip[2] / clip[3], 1.0])
+        w = np.linalg.inv(self._vp) @ ndc
+        target = w[:3] / w[3]
+        b = self._grab_blend * self._grab_blend * (3 - 2 * self._grab_blend)
+        swing = (180.0 if g.startswith("leg") else 0.0) - ctx.tilt * 0.9 + math.sin(self.t * 7) * 6 * ctx.struggle
+        M = translate(*(limb + (target - limb) * b)) @ rot_m4(_rz(swing * b)) @ translate(*-limb)
+        self._pin_M = M
+        return M[None] @ W
 
     # ------------------------------------------------------------------ Seed-san 2: lifelike motion
     def _enhanced_pose(self, P: dict, hip: np.ndarray, state: str, ctx: FrameContext, add) -> None:
@@ -618,7 +693,9 @@ class VrmCharacter:
         else:
             target_yaw = self.look[0] * 14
         self.yaw += (target_yaw - self.yaw) * min(1.0, dt * 6)
-        tilt = -ctx.tilt * 0.6 if state == DRAG else 0.0
+        tilt = -ctx.tilt * 0.6 if state == DRAG and not ctx.grab else 0.0
+        if ctx.grab:
+            self.yaw *= max(0.0, 1 - dt * 6)      # face the user while dangling
         hop = 0.0
         if state == REACT:
             hop = max(0.0, math.sin(min(1.0, ctx.state_t / 0.35) * math.pi)) * 0.045 * self.k
@@ -645,18 +722,21 @@ class VrmCharacter:
             m.set_bone(b, q)
         m.offset_bone("hips", self.hip_off)
 
-        W = m.world_matrices(root)
-        n = 1 if dt <= 0.04 else 2
-        for _ in range(n):
-            self.springs.update(W, dt / n)
-        self._W = m.world_matrices(root)
-        self._expressions(state, ctx, dt)
-
         h = m.height
         half = WIDTH_M * h / 2
         cx = self.off[0] + m.center_x
         view = translate(-cx, -self.off[1], 0) @ translate(0, 0, -5)
         self._vp = ortho(-half, half, m.min_y - BOT_M * h, m.min_y + (1 + TOP_M) * h, 0.1, 20) @ view
+
+        W = m.world_matrices(root)
+        W = self._limb_pin(W, ctx, dt)          # lifted by a hand/leg: hang from it under the cursor
+        pin = getattr(self, "_pin_M", None)
+        n = 1 if dt <= 0.04 else 2
+        for _ in range(n):
+            self.springs.update(W, dt / n)
+        W2 = m.world_matrices(root)
+        self._W = pin[None] @ W2 if pin is not None else W2
+        self._expressions(state, ctx, dt)
 
     # ------------------------------------------------------------------ rendering
     def render(self, state: str, ctx: FrameContext, dpr: float) -> QImage:
@@ -725,6 +805,19 @@ class VrmCharacter:
                 p.setBrush(g)
                 p.drawEllipse(QPointF(cx, cy), r, r * 0.6)
         top = self.project(hc + self._canon((0, 0.13, 0)))
+        if ctx.struggle > 0.3:   # flailing: sweat drops and little motion marks
+            for i, sx in enumerate((1, -1)):
+                ph = (t * 2.2 + i * 0.5) % 1.0
+                x, y = self.project(hc + self._canon((sx * (0.09 + ph * 0.04), 0.05 - ph * 0.04, 0.0)))
+                col = QColor(120, 180, 255, int(220 * (1 - ph)))
+                p.setPen(_pen(col.darker(130), 1.0))
+                p.setBrush(col)
+                p.drawEllipse(QPointF(x, y), 2.5, 3.4)
+            p.setPen(_pen(QColor(60, 60, 80, 160), 1.6))
+            for sx in (1, -1):
+                x, y = self.project(hc + self._canon((sx * 0.12, 0.0, 0.0)))
+                for k in range(3):
+                    p.drawLine(QPointF(x + sx * 3, y - 6 + k * 6), QPointF(x + sx * 9, y - 8 + k * 6))
         if self.timers["tears"] > 0 or ctx.emotion == "hurt":
             for sx in (1, -1):
                 slide = (t * 0.7 + (0.5 if sx < 0 else 0)) % 1.0

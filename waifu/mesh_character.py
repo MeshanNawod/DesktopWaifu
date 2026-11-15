@@ -116,6 +116,8 @@ class MeshCharacter:
         self.timers = {"eye_shut": 0.0, "blush": 0.0, "tears": 0.0, "happy": 0.0}
         self._press_local = QPointF()
         self._tug_hand = None
+        self._grab_blend = 0.0
+        self._grab_last = None
         self._frame: QImage | None = None
         self._vp = np.eye(4)
         self._root = np.eye(4)
@@ -210,6 +212,9 @@ class MeshCharacter:
         for side, p in self.hands.items():
             z.append((side, self._world(p), 0.05 * h))
         z.append(("head", self._world(self.head_c), self.head_r * 1.15))
+        for side, sgn in (("leg_l", 1), ("leg_r", -1)):   # legs: lower half, each side of centre
+            z.append((side, self._world([sgn * 0.06 * h, 0.15 * h, 0]), 0.06 * h))
+            z.append((side, self._world([sgn * 0.06 * h, 0.32 * h, 0]), 0.06 * h))
         z.append(("chest", self._world([0, 0.72 * h, self.face_z * 0.5]), 0.07 * h))
         z.append(("skirt", self._world([0, 0.5 * h, 0]), 0.09 * h))
         return z
@@ -323,7 +328,13 @@ class MeshCharacter:
         # arms: relaxed, raised when dragged/falling, waving with music, reaching when you pull a hand
         if self.arm_on:
             goal = np.array([self.arm_rest, self.arm_rest])
-            if state in (DRAG, FALL):
+            if state == DRAG and ctx.grab.startswith("hand"):
+                i = 0 if ctx.grab.endswith("_l") else 1
+                goal[i] = -1.35                                   # held arm stretched up overhead
+                goal[1 - i] = self.arm_rest - 0.5 + math.sin(t * 11) * 0.6 * ctx.struggle
+            elif state == DRAG and ctx.grab.startswith("leg"):
+                goal[:] = -1.1 + np.array([1, -1]) * math.sin(t * 10) * 0.4 * ctx.struggle   # arms dangle "down"
+            elif state in (DRAG, FALL):
                 goal[:] = math.radians(25) + math.sin(t * 9) * 0.15
             elif ctx.music:
                 goal += np.array([1, -1]) * math.sin(t * 2.2) * 0.12 - ctx.beat * 0.15
@@ -336,6 +347,10 @@ class MeshCharacter:
                 dx, dy = (pt.x() - sh[0]) * (1 if self.yaw > -90 else -1), pt.y() - sh[1]
                 goal[i] = max(-1.2, min(1.45, math.atan2(dy, abs(dx) + 1e-3)))
             self.arm_ang += (goal - self.arm_ang) * min(1.0, dt * 8)
+        if state == DRAG:   # struggling: head shakes, body wriggles
+            s = ctx.struggle
+            q = q_mul(q_axis((0, 1, 0), math.sin(t * 11) * 16 * s), q)
+            self.bend_v[0] += math.sin(t * 10) * s * dt * 14
         breath = math.sin(t * math.tau / (5.0 if state == SLEEP else 3.6)) * 0.008
         self._deform = {"head_m3": q_to_m3(q), "breath": breath}
         # body yaw
@@ -351,13 +366,42 @@ class MeshCharacter:
             hop = abs(math.sin(t * 7.0)) * 0.012 * self.m.height
         if state == REACT:
             hop = max(0.0, math.sin(min(1.0, ctx.state_t / 0.35) * math.pi)) * 0.03 * self.m.height
-        tilt = -ctx.tilt * 0.5 if state == DRAG else 0.0
+        tilt = -ctx.tilt * 0.5 if state == DRAG and not ctx.grab else 0.0
+        if ctx.grab:
+            self.yaw *= max(0.0, 1 - dt * 6)
         h = self.m.height
         piv = np.array([0, h * 0.85, 0])
         self._root = (translate(0, hop, 0) @ translate(*piv) @ rot_m4(q_axis((0, 0, 1), tilt)) @ translate(*-piv)
                       @ rot_m4(q_axis((0, 1, 0), self.yaw)))
         half = WIDTH_M * h / 2
         self._vp = ortho(-half, half, -BOT_M * h, (1 + TOP_M) * h, -10, 10)
+        self._pin_limb(ctx, dt)
+
+    def _pin_limb(self, ctx: FrameContext, dt: float) -> None:
+        """Lifted by a hand or leg: hang from it, pinned under the cursor, swinging like a pendulum."""
+        if ctx.grab:
+            self._grab_last = (ctx.grab, ctx.grab_pt)
+            self._grab_blend = min(1.0, self._grab_blend + dt * 7)
+        else:
+            self._grab_blend = max(0.0, self._grab_blend - dt * 5)
+        if self._grab_blend <= 0 or not self._grab_last:
+            return
+        g, pt = self._grab_last
+        h = self.m.height
+        sgn = 1.0 if g.endswith("_l") else -1.0
+        if g.startswith("leg"):
+            local = np.array([sgn * 0.06 * h, 0.03 * h, 0.0])
+        else:
+            local = self.hands.get("hand_l" if sgn > 0 else "hand_r", np.array([sgn * 0.3 * h, 0.78 * h, 0.0]))
+        limb = self._world(local)
+        clip = self._vp @ np.append(limb, 1.0)
+        ndc = np.array([pt[0] / self.W * 2 - 1, 1 - pt[1] / self.H * 2, clip[2] / clip[3], 1.0])
+        w = np.linalg.inv(self._vp) @ ndc
+        target = w[:3] / w[3]
+        b = self._grab_blend * self._grab_blend * (3 - 2 * self._grab_blend)
+        swing = (180.0 if g.startswith("leg") else 0.0) - ctx.tilt * 0.9 + math.sin(self.t * 7) * 6 * ctx.struggle
+        M = translate(*(limb + (target - limb) * b)) @ rot_m4(q_axis((0, 0, 1), swing * b)) @ translate(*-limb)
+        self._root = M @ self._root
 
     # ------------------------------------------------------------------ rendering
     def render(self, state: str, ctx: FrameContext, dpr: float) -> QImage:

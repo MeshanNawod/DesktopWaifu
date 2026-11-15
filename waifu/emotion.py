@@ -138,9 +138,10 @@ class EmotionEngine(QObject):
         if kind == "tug" and zone in ("hair", "scarf"):
             self._adjust(-2, 0)
             return Reaction("surprised", f"{zone}_tug", -2, 0, woke)
-        # gentle / tap / tug on hands
-        gain = 4.0 if kind == "gentle" else 2.0
-        aff = 1.5 if zone in NICE_ZONES and kind in ("gentle", "tug") else 0.5 if zone in NICE_ZONES else 0.0
+        # pet (double click / stroking) > gentle (short click) > tap
+        gain = {"pet": 6.0, "gentle": 3.0}.get(kind, 2.0)
+        aff = (3.0 if kind == "pet" else 1.0 if kind in ("gentle", "tug") else 0.5) if zone in NICE_ZONES else \
+            (1.0 if kind == "pet" else 0.0)
         if zone == "eyes":
             gain, aff = 0.0, 0.0
         self._adjust(gain, aff)
@@ -158,9 +159,12 @@ class EmotionEngine(QObject):
             self._set(HAPPY, 40)
             return Reaction("excited", "happy_burst", gain, aff, woke)
         emotion = {"head": "happy", "hand": "shy", "cheek": "shy", "mouth": "shy", "eyes": "surprised"}.get(zone, "happy")
+        if kind == "pet":
+            self._flavour("shy" if zone in ("cheek", "mouth", "hand") else "happy", 15)
+            return Reaction("happy", f"{zone}_pet", gain, aff, woke)
         if kind in ("gentle", "tug") and zone in ("hand", "cheek", "mouth"):
             self._flavour("shy", 15)
-        elif kind == "tap":
+        elif kind in ("tap", "gentle"):
             self._taps = [t for t in self._taps if now - t < 8] + [now]
             if len(self._taps) >= 3 and self.affection >= 45:
                 self._flavour("playful", 20)     # lots of light boops -> she gets playful
@@ -190,6 +194,19 @@ class EmotionEngine(QObject):
         if self.affection >= 70 and self.mood >= 60:
             return "playful" if int(time.monotonic() / 90) % 3 == 0 else "happy"
         return "neutral"
+
+    def struggle(self, limb: str) -> str:
+        """Lifted off the ground (by a hand / leg / her body): she wriggles. Returns the line key."""
+        if self.state == SLEEPING:
+            self.wake(gentle=False)
+        self._flavour("struggling", 3600)
+        self.mem.bump("lifted")
+        return "struggle_leg" if limb.startswith("leg") else "struggle_hand" if limb.startswith("hand") \
+            else "struggle_body"
+
+    def released(self) -> None:
+        if self._label == "struggling":
+            self._label, self._label_until = "flustered", time.monotonic() + 8
 
     def apology(self, text: str) -> bool:
         low = text.lower()

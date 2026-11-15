@@ -36,12 +36,13 @@ MOOD_PREFS: dict[str, tuple[dict[str, float], dict[str, float]]] = {
     "sleepy":    ({"half_lidded": 6, "closed": 3, "downcast": 1}, {"calm": 6, "gentle_smile": 3}),
     "upset":     ({"downcast": 4, "side_glance": 4, "half_lidded": 1}, {"sorrowful": 5, "pout": 5}),
     "playful":   ({"direct": 3, "side_glance": 3, "wink": 2, "sparkle": 2}, {"teasing_smirk": 6, "beaming": 3, "gentle_smile": 1}),
+    "struggling": ({"side_glance": 3, "closed": 2, "direct": 2, "upward": 1}, {"startled": 5, "pout": 4, "sorrowful": 1}),
 }
 # what a Gemini emotion tag / touch emotion means for her mood
 EMOTION_MOOD = {
     "happy": "happy", "excited": "happy", "shy": "shy", "flustered": "flustered", "surprised": "flustered",
     "sleepy": "sleepy", "sad": "upset", "angry": "upset", "hurt": "upset", "playful": "playful",
-    "thinking": "neutral", "neutral": "neutral",
+    "thinking": "neutral", "neutral": "neutral", "struggling": "struggling",
 }
 
 # gaze -> (look offset x, y in -1..1, eyelid 0..1, extra)

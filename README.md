@@ -28,6 +28,19 @@ Use `run.bat debug` to keep a console with live logs. Logs are also written to
 
 Phrases like "look at my screen" or "what am I doing" in a chat message also attach a screenshot.
 
+## Gestures (`waifu/gestures.py`)
+
+| Mouse | Meaning | She… |
+|---|---|---|
+| Short click | gentle touch | smiles softly and greets you |
+| Long press / hold (0.55 s) | firm press, a hit ("hayiyen gahanawa") | is startled or hurt and gets defensive; mood drops |
+| Double click, or stroking back and forth over her head / face / hair | petting ("athaganawa") | closes her eyes happily and blushes; big affection boost |
+| Press a **hand or leg** and drag | lifted by that limb | dangles from it (by a leg = upside down), swings with your motion and **struggles / wriggles**: kicking, flailing, head shaking, sweat drops |
+| Press her body and drag | picked up | swings, struggles, falls with gravity when released |
+| Middle click / tray icon / right-click → Chat | | opens the chat |
+
+Hitboxes: head, face (cheeks), eyes, mouth, hands, legs, body (plus hair, chest, skirt).
+
 ## Characters
 
 Right-click her, then **👗 Character**, to switch at any time:

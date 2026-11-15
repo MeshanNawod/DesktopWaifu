@@ -44,6 +44,9 @@ class FrameContext:
     music: bool = False         # music is playing
     beat: float = 0.0           # 1.0 on a beat, decays to 0
     expr: object = None         # expressions.Expr: current cell of the 64-expression matrix
+    grab: str = ""              # limb she is held by while dragged: hand_l / hand_r / leg_l / leg_r
+    grab_pt: tuple = (0.0, 0.0) # where the cursor holds her, in window coordinates
+    struggle: float = 0.0       # 0..1 wriggling intensity while lifted
 
 
 # --------------------------------------------------------------------------- procedural
