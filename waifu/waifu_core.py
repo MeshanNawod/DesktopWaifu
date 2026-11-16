@@ -13,7 +13,8 @@ import time
 from collections import deque
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QBitmap, QColor, QCursor, QGuiApplication, QImage, QPainter, QRegion
+from PySide6.QtGui import (QBitmap, QColor, QCursor, QGuiApplication, QImage, QLinearGradient, QPainter,
+                           QPainterPath, QPen, QRadialGradient, QRegion)
 from PySide6.QtWidgets import QApplication, QToolTip, QWidget
 
 from .config import Config
@@ -86,6 +87,7 @@ class CharacterWindow(QWidget):
     cute = Signal(str)               # she did something cute (jump, twirl, nya, heart, kiss, wave)
     got_up = Signal()                # ...and she's back on her feet
     held_done = Signal(str)          # she put down the pet / toy she was hugging
+    sick = Signal(str)               # shaken too hard: "queasy", "puke", "better"
     dropped = Signal(float)          # impact speed
     double_clicked = Signal()
     menu_requested = Signal(QPoint)
@@ -148,6 +150,18 @@ class CharacterWindow(QWidget):
         self._rot_moved = False
         self._suppress_menu = False
         self._pose_left = 0.0
+        self._jump_prep: tuple[float, float] | None = None
+        self.singing = False
+        self.music_on = False
+        self._shake = 0.0            # how hard she's been shaken (decays)
+        self._shake_dir = 0
+        self._shake_prev: tuple[float, QPointF] | None = None
+        self._queasy_said = False
+        self._puke_t = 0.0           # > 0 while she's throwing up
+        self._puddle_t = 0.0
+        self._puddle_x = 0.0
+        self._splashed = False
+        self._splash_x = 0.0
 
         self.reload_sprites()
         self.reset_position()
@@ -283,6 +297,9 @@ class CharacterWindow(QWidget):
             else:
                 self._set_state(IDLE, duration=random.uniform(3, 6))
             return
+        if getattr(self, "in_activity", False):     # busy with an activity: no random hops / wandering off
+            self._set_state(IDLE, duration=2.0)
+            return
         cute_chance = 0.28 if self.mood_label in ("happy", "playful") else 0.1
         if not (self.busy or self.talking or self.ctx.music) and random.random() < cute_chance:
             self.do_cute(random.choice(CUTE_ACTIONS))
@@ -327,6 +344,19 @@ class CharacterWindow(QWidget):
             ctx.emotion = "angry"
         ctx.angry += ((1.0 if self.angry_on else 0.0) - ctx.angry) * min(1.0, dt * 3)
         ctx.lie += ((1.0 if ctx.pose == "lie" and self.state in (IDLE, REACT, PET) else 0.0) - ctx.lie) * min(1.0, dt * 4)
+        self._update_sick(dt)
+        if self._jump_prep is not None:                 # crouch... then spring up
+            left_t, power = self._jump_prep
+            left_t -= dt
+            ctx.land = max(ctx.land, 0.8)
+            if left_t <= 0 or self.state in (DRAG, FALL, KNOCK, SLEEP):
+                self._jump_prep = None
+                if self.state not in (DRAG, FALL, KNOCK, SLEEP):
+                    self._launch(power)
+            else:
+                self._jump_prep = (left_t, power)
+        else:
+            ctx.land = max(0.0, ctx.land - dt * 1.5)
         if self.user_pose and self.user_pose != "sit":
             self._pose_left -= dt
             if self._pose_left <= 0:
@@ -371,6 +401,8 @@ class CharacterWindow(QWidget):
             if self.py >= ground:
                 self.py = ground
                 impact = self.vy
+                if impact > 350:                         # knees bend to absorb the landing
+                    self.ctx.land = max(self.ctx.land, min(1.0, impact / 1500))
                 if impact > 1100:
                     self.vy = -impact * 0.28
                     self.vx *= 0.6
@@ -440,6 +472,8 @@ class CharacterWindow(QWidget):
         p.drawImage(0, 0, self._frame)
         if self.ctx.holding:
             self._paint_held(p)
+        if getattr(self.ctx, "sick", 0.0) > 0.05 or self._puke_t > 0:
+            self._paint_sick(p)
         if self.state == KNOCK and 0.25 < self.ctx.state_t < KNOCK_UP:
             p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -452,6 +486,141 @@ class CharacterWindow(QWidget):
                 p.setBrush(QColor("#ffe066"))
                 p.drawPolygon(_star(x, y, 6.5))
         p.end()
+
+    # ----------------------------------------------------------------- shaken too hard: dizzy -> rainbow puke
+    def _detect_shake(self, now: float, gp: QPointF) -> None:
+        if self._shake_prev is not None:
+            t0, p0 = self._shake_prev
+            dt = max(1e-3, now - t0)
+            d = gp - p0
+            ax = d.x() if abs(d.x()) >= abs(d.y()) else d.y()
+            speed = abs(ax) / dt
+            if speed > 450:
+                direction = 1 if ax > 0 else -1
+                if self._shake_dir and direction != self._shake_dir:      # a back-and-forth swing
+                    self._shake = min(4.0, self._shake + 0.16 + min(0.3, speed / 9000))
+                self._shake_dir = direction
+        self._shake_prev = (now, gp)
+
+    def _update_sick(self, dt: float) -> None:
+        ctx = self.ctx
+        held = self.state == DRAG
+        self._shake = max(0.0, self._shake - dt * (0.12 if held else 0.3))
+        target = max(0.0, min(1.0, (self._shake - 0.7) / 1.3))
+        if self._puke_t > 0:
+            target = 1.0
+        ctx.sick = getattr(ctx, "sick", 0.0) + (target - getattr(ctx, "sick", 0.0)) * min(1.0, dt * 3)
+        if self._shake > 1.4 and not self._queasy_said:
+            self._queasy_said = True
+            self.sick.emit("queasy")
+        if self._shake > 2.3 and self.state in (IDLE, REACT, PET, SIT, WALK) and self._puke_t <= 0:
+            self._start_puke()                       # back on the ground after being shaken silly: bleh
+        if self._puke_t > 0:
+            self._puke_t -= dt
+            if not self._splashed and 3.2 - self._puke_t > 0.62:      # it reaches the taskbar
+                self._splashed = True
+                self._splash_x = self.px + self._head_rect_local().center().x()
+                self.sick.emit("splash")
+            ctx.mouth = 0.75 if 0.5 < self._puke_t < 2.6 else ctx.mouth
+            if self._puke_t <= 0:
+                self._shake = 0.0
+                self._queasy_said = False
+                if ctx.pose == "sick":
+                    ctx.pose = getattr(self, "_pose_before", "") or ""
+                self.set_emotion("pout", 5.0)
+                self.sick.emit("better")
+        self._puddle_t = max(0.0, self._puddle_t - dt)
+
+    def _start_puke(self) -> None:
+        self._puke_t = 3.2
+        self._splashed = False
+        self._puddle_t = 0.0
+        self._puddle_x = self.width() / 2
+        self._pose_before = self.ctx.pose
+        self.ctx.pose = "sick"
+        self._set_state(REACT, duration=3.4)
+        self.set_emotion("hurt", 4.0)
+        self.sick.emit("puke")
+
+    def _paint_sick(self, p: QPainter) -> None:
+        ctx = self.ctx
+        sick = getattr(ctx, "sick", 0.0)
+        hr = self._head_rect_local()
+        cx, cy, hw, hh = hr.center().x(), hr.center().y(), hr.width(), hr.height()
+        t = ctx.t
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if sick > 0.05 and self._puke_t <= 0.4:
+            # green-faced, swirly-eyed, a sweat drop
+            g = QRadialGradient(QPointF(cx, cy + hh * 0.18), hw * 0.42)
+            g.setColorAt(0, QColor(110, 200, 90, int(80 * sick)))
+            g.setColorAt(1, QColor(110, 200, 90, 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(g)
+            p.drawEllipse(QPointF(cx, cy + hh * 0.18), hw * 0.42, hh * 0.3)
+            if sick > 0.45:
+                for sx in (-1, 1):
+                    ex, ey = cx + sx * hw * 0.16, cy + hh * 0.08
+                    path = QPainterPath()
+                    for i in range(40):
+                        a = i / 39 * math.tau * 2.2 + t * 7 * sx
+                        r = 0.6 + i / 39 * hw * 0.075
+                        pt = QPointF(ex + math.cos(a) * r, ey + math.sin(a) * r)
+                        path.moveTo(pt) if i == 0 else path.lineTo(pt)
+                    p.setPen(QPen(QColor(60, 40, 80, int(230 * sick)), 1.4))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.drawPath(path)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(140, 200, 255, int(200 * sick)))
+            p.drawEllipse(QPointF(cx + hw * 0.36, cy - hh * 0.05 + (t * 20) % 8), 2.6, 3.6)
+        floor = self._feet_y()
+        k = 3.2 - self._puke_t                              # time since it started
+        heaving = 0.55 < k < 1.35 or 1.75 < k < 2.5        # two heaves
+        if self._puke_t > 0 and heaving:
+            mx, my = cx, cy + hh * 0.42
+            body, dark = QColor(204, 190, 96, 235), QColor(150, 132, 52, 240)
+            path = QPainterPath()
+            left, right = [], []
+            steps = 18
+            for i in range(steps + 1):
+                f = i / steps
+                y = my + (floor - my) * f
+                x = mx + math.sin(f * 7 + t * 14) * 1.8 * f + f * f * hw * 0.04
+                wdt = 2.2 + f * 3.2 + math.sin(t * 25 + f * 9) * 0.6
+                left.append(QPointF(x - wdt, y))
+                right.append(QPointF(x + wdt, y))
+            path.moveTo(left[0])
+            for q in left[1:]:
+                path.lineTo(q)
+            for q in reversed(right):
+                path.lineTo(q)
+            path.closeSubpath()
+            p.setPen(QPen(dark, 1.0))
+            p.setBrush(body)
+            p.drawPath(path)
+            p.setPen(Qt.PenStyle.NoPen)
+            for i in range(7):                              # lumpy bits flowing down
+                f = (t * 1.7 + i / 7) % 1.0
+                x = mx + math.sin(f * 7 + t * 14) * 1.8 * f + (i % 3 - 1) * 1.6
+                p.setBrush(QColor(176, 150, 64) if i % 2 else QColor(232, 214, 140))
+                p.drawEllipse(QPointF(x, my + (floor - my) * f), 1.6 + (i % 3) * 0.5, 1.3)
+            for i in range(6):                              # splashing on the taskbar
+                ph = (t * 2.6 + i / 6) % 1.0
+                dx = (i - 2.5) * 4.5 * ph * 2
+                p.setBrush(QColor(204, 190, 96, int(220 * (1 - ph))))
+                p.drawEllipse(QPointF(mx + dx, floor - 2 - math.sin(ph * math.pi) * 9), 1.8, 1.8)
+
+    def _feet_y(self) -> float:
+        try:
+            return float(self.sprites.feet_y()) if hasattr(self.sprites, "feet_y") else self.height() - 3.0
+        except Exception:
+            return self.height() - 3.0
+
+    def set_singing(self, on: bool) -> None:
+        self.singing = on
+        self.ctx.music = on or self.music_on
+        if on and self.state == WALK:
+            self._set_state(IDLE, duration=6)
 
     def _paint_held(self, p: QPainter) -> None:
         from .companions import draw_thing
@@ -468,6 +637,27 @@ class CharacterWindow(QWidget):
             except Exception:
                 pass
         size = hr.height() * (1.05 if self.ctx.holding == "teddy" else 1.15)
+        k = self.ctx.holding
+        side = 1.0 if self.ctx.pose.endswith("_l") else -1.0 if self.ctx.pose.endswith("_r") else 1.0
+        if k == "can":
+            from .companions import draw_can
+            hp = self.sprites.hands_point("left" if side > 0 else "right") if hasattr(self.sprites, "hands_point") else None
+            if hp is None:
+                hp = (cx + side * hr.width() * 0.5, cy)
+            draw_can(p, hp[0], hp[1], side, hr.height() * 0.6, self.ctx.t, self._feet_y() - 20)
+            return
+        if k in ("mop", "spray"):
+            from .companions import draw_mop, draw_spray
+            which = ("left" if side > 0 else "right") if k == "spray" else None
+            hp = self.sprites.hands_point(which) if hasattr(self.sprites, "hands_point") else None
+            if hp is None:
+                hp = (cx + side * hr.width() * 0.5, cy)
+            if k == "mop":
+                draw_mop(p, hp[0], hp[1], self.width() / 2 + side * hr.width() * 0.95, self._feet_y() - 1,
+                         hr.height(), self.ctx.t)
+            else:
+                draw_spray(p, hp[0], hp[1], side, hr.height() * 0.55, self.ctx.t)
+            return
         hp = self.sprites.hands_point() if hasattr(self.sprites, "hands_point") else None
         if hp is not None:               # in her hands
             k = self.ctx.holding
@@ -609,6 +799,7 @@ class CharacterWindow(QWidget):
                 self._start_lift(self._press_zone)
             if self._dragging:
                 now = time.perf_counter()
+                self._detect_shake(now, gp)
                 self._drag_samples.append((now, gp))
                 inst_vx = 0.0
                 if len(self._drag_samples) >= 2:
@@ -717,6 +908,7 @@ class CharacterWindow(QWidget):
             return
         if self._dragging:
             self._dragging = False
+            self._shake_prev, self._shake_dir = None, 0
             self.setCursor(Qt.CursorShape.ArrowCursor)
             vx = vy = 0.0
             if len(self._drag_samples) >= 2:
@@ -869,13 +1061,19 @@ class CharacterWindow(QWidget):
         """A real jump: up she goes (gravity brings her down), arms up, 'Yay~!'."""
         if self.state in (DRAG, FALL, KNOCK, SLEEP):
             return
+        if self._jump_prep is not None:
+            return
         self.user_pose = None
+        self.ctx.pose = ""
+        self._jump_prep = (0.17, power)   # anticipation: a quick crouch first
+        self.set_emotion("happy", 3.0)
+
+    def _launch(self, power: float) -> None:
         self.ctx.jump = True
         self.vy = -950.0 * power
         self.vx = 0.0
         self.py -= 2                      # leave the ground so physics takes over
         self._set_state(FALL)
-        self.set_emotion("happy", 3.0)
 
     def twirl(self) -> None:
         if self.state in (DRAG, FALL, KNOCK):
@@ -990,6 +1188,8 @@ class CharacterWindow(QWidget):
             self._set_state(IDLE, duration=2)
 
     def set_music(self, on: bool, beat: float = 0.0) -> None:
+        self.music_on = on
+        on = on or self.singing
         self.ctx.music = on
         self.ctx.beat = max(self.ctx.beat, beat)
         if on and self.state == WALK:

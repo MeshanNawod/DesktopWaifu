@@ -58,6 +58,8 @@ class FrameContext:
     angry: float = 0.0          # 0..1 how angry she is (arms crossed, turns away, steam, vein)
     pose: str = ""              # pose you asked for: kneel, bow, hands_up, dance... (see poses.py)
     lie: float = 0.0            # 0..1 lying down (you told her to lie down)
+    sick: float = 0.0           # 0..1 dizzy / queasy after being shaken hard
+    land: float = 0.0           # 0..1 knees bending: absorbing a landing / crouching before a jump
 
 
 # --------------------------------------------------------------------------- procedural

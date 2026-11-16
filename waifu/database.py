@@ -32,6 +32,7 @@ class Memory:
             if old.exists() and not path.exists():
                 old.rename(path)          # migrate from the earlier file name
         self.path = path
+        self.private = False      # privacy: when True nothing about you (chats, facts, habits, events) is saved
         self._lock = threading.Lock()
         self.db = sqlite3.connect(str(self.path), check_same_thread=False)
         self.db.executescript(SCHEMA)
@@ -56,12 +57,16 @@ class Memory:
             self.db.commit()
 
     def bump(self, key: str, by: float = 1) -> float:
+        if self.private:
+            return float(self.get(key, 0.0))
         v = float(self.get(key, 0.0)) + by
         self.set(key, v)
         return v
 
     # ------------------------------------------------------------------ messages
     def add_message(self, role: str, text: str) -> None:
+        if self.private:
+            return
         with self._lock:
             self.db.execute("INSERT INTO messages(ts, role, text) VALUES(?, ?, ?)", (time.time(), role, text))
             self.db.commit()
@@ -78,7 +83,7 @@ class Memory:
     # ------------------------------------------------------------------ facts
     def add_fact(self, fact: str, category: str = "general") -> bool:
         fact = " ".join(fact.split()).strip(" .")
-        if len(fact) < 3:
+        if len(fact) < 3 or self.private:
             return False
         with self._lock:
             cur = self.db.execute("INSERT OR IGNORE INTO facts(ts, category, fact) VALUES(?, ?, ?)",
@@ -97,6 +102,8 @@ class Memory:
 
     # ------------------------------------------------------------------ events
     def event(self, kind: str, detail: str) -> None:
+        if self.private:
+            return
         with self._lock:
             self.db.execute("INSERT INTO events(ts, kind, detail) VALUES(?, ?, ?)", (time.time(), kind, detail))
             self.db.commit()

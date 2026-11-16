@@ -19,6 +19,21 @@ from .workers import run_async
 
 log = logging.getLogger(__name__)
 
+
+def _fix_py315_executor() -> None:
+    """Python 3.15: asyncio's default executor goes through a lazy `concurrent.futures.ThreadPoolExecutor`
+    attribute that isn't callable, which broke edge-tts (and with it her cute voice). Point it at the real class."""
+    try:
+        import concurrent.futures as cf
+        from concurrent.futures.thread import ThreadPoolExecutor
+        if not isinstance(cf.__dict__.get("ThreadPoolExecutor"), type):
+            cf.ThreadPoolExecutor = ThreadPoolExecutor
+    except Exception:
+        pass
+
+
+_fix_py315_executor()
+
 _STRIP = re.compile(r"\*[^*]{0,60}\*|\[[a-z]+\]|[\U00010000-\U0010FFFF]")
 
 
@@ -56,7 +71,15 @@ def synth_edge(text: str, voice: str, rate: str, pitch: str) -> SpeechAudio:
                     spans.append((start, start + chunk["duration"] / 10_000))
         return spans
 
-    spans = asyncio.run(go())
+    from concurrent.futures.thread import ThreadPoolExecutor
+    loop = asyncio.new_event_loop()
+    pool = ThreadPoolExecutor(2)
+    loop.set_default_executor(pool)          # never relies on the lazy attribute (Python 3.15)
+    try:
+        spans = loop.run_until_complete(go())
+    finally:
+        loop.close()
+        pool.shutdown(wait=False)
     return SpeechAudio(path, spans=spans)
 
 
@@ -139,7 +162,7 @@ class Speaker(QObject):
         cfg = self.cfg
 
         def work() -> SpeechAudio:
-            if cfg.tts_engine == "edge":
+            if cfg.tts_engine == "edge" and not cfg.local_only:     # local-only: offline Windows voice
                 try:
                     return synth_edge(text, cfg.tts_voice, cfg.tts_rate, cfg.tts_pitch)
                 except Exception as e:  # offline, bad voice name...

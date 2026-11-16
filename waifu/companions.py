@@ -416,6 +416,44 @@ def draw_tea(p: QPainter, cx: float, cy: float, s: float) -> None:
     _heart(p, cx, cy, s * 0.35, QColor("#ff6b97"))
 
 
+def draw_mop(p: QPainter, hx: float, hy: float, fx: float, fy: float, s: float, t: float) -> None:
+    """A mop held at (hx, hy), its head scrubbing the floor around (fx, fy). s ~ her head size."""
+    fx += math.sin(t * 7) * s * 0.35
+    top = QPointF(hx + (hx - fx) * 0.25, hy - s * 0.35)
+    p.setPen(_pen("#8a5a32", max(2.0, s * 0.07)))
+    p.drawLine(top, QPointF(fx, fy - s * 0.2))
+    p.setPen(_pen("#5b6fa8", max(1.0, s * 0.05)))
+    p.setBrush(QColor("#7d93d6"))
+    p.drawRoundedRect(QRectF(fx - s * 0.2, fy - s * 0.26, s * 0.4, s * 0.1), 2, 2)
+    p.setPen(_pen("#e9e4d6", max(1.0, s * 0.045)))
+    for i in range(9):                                   # floppy mop strings
+        x0 = fx - s * 0.18 + i * s * 0.045
+        sway = math.sin(t * 7 + i) * s * 0.05
+        p.drawLine(QPointF(x0, fy - s * 0.16), QPointF(x0 + sway, fy - 1))
+
+
+def draw_spray(p: QPainter, hx: float, hy: float, side: float, s: float, t: float) -> None:
+    """A spray bottle in her hand, misting down toward `side`."""
+    p.save()
+    p.translate(hx, hy)
+    p.rotate(-side * 35)
+    p.setPen(_pen("#2f7a8a", max(1.0, s * 0.05)))
+    p.setBrush(QColor("#7fd8e8"))
+    p.drawRoundedRect(QRectF(-s * 0.16, -s * 0.05, s * 0.32, s * 0.55), s * 0.08, s * 0.08)
+    p.setBrush(QColor("#ffffff"))
+    p.drawRect(QRectF(-s * 0.08, -s * 0.2, s * 0.16, s * 0.16))
+    p.setBrush(QColor("#ff8fb6"))
+    p.drawRect(QRectF(-s * 0.03 + side * s * 0.06, -s * 0.24, s * 0.16 * side, s * 0.07))
+    p.restore()
+    p.setPen(Qt.PenStyle.NoPen)
+    for i in range(10):                                  # mist
+        ph = (t * 2.2 + i / 10) % 1.0
+        x = hx + side * (s * 0.3 + ph * s * 1.4) + math.sin(i * 3.1) * ph * s * 0.3
+        y = hy + ph * s * 1.9 + math.cos(i * 2.3) * ph * s * 0.2
+        p.setBrush(QColor(180, 230, 255, int(170 * (1 - ph))))
+        p.drawEllipse(QPointF(x, y), 1.5 + ph * 2.5, 1.5 + ph * 2.5)
+
+
 def draw_thing(p: QPainter, kind: str, cx: float, cy: float, s: float) -> None:
     """Draw a pet / toy centred on (cx, cy), about `s` px tall (used for what she's holding)."""
     if kind == "ball":
@@ -923,6 +961,501 @@ class Pet(Thing):
                 p.drawText(QPointF(w * 0.62 + ph * 8 * self.facing, h * 0.45 - ph * 18), "z")
 
 
+FLOWERS = {   # petal colour, centre colour, petal count
+    "sunflower": ("#ffd23f", "#7a4a1e", 13),
+    "tulip": ("#ff6f91", "#ffd3dc", 3),
+    "daisy": ("#ffffff", "#ffc93c", 11),
+    "sakura": ("#ffc1d9", "#ff7aa8", 5),
+    "bluebell": ("#8fb8ff", "#ffffff", 5),
+}
+
+
+TREES = {   # canopy colours, extra (fruit / blossom) colour
+    "oak": ("#5aa64a", "#3f8a3a", None),
+    "pine": ("#2f7d4a", "#25643b", None),
+    "apple": ("#62b04f", "#468f3e", "#e8413c"),
+    "cherry": ("#ffb7d0", "#ff95bb", "#ffffff"),
+}
+
+
+def draw_can(p: QPainter, hx: float, hy: float, side: float, s: float, t: float, floor: float) -> None:
+    """A watering can in her hand, pouring toward `side` down to the floor."""
+    p.save()
+    p.translate(hx, hy)
+    p.scale(side, 1)
+    p.rotate(28)
+    p.setPen(_pen("#3c8a5a", max(1.0, s * 0.05)))
+    p.setBrush(QColor("#7fd6a0"))
+    p.drawRoundedRect(QRectF(-s * 0.25, -s * 0.05, s * 0.5, s * 0.38), s * 0.08, s * 0.08)
+    p.drawLine(QPointF(s * 0.22, s * 0.05), QPointF(s * 0.55, -s * 0.12))          # spout
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawArc(QRectF(-s * 0.2, -s * 0.22, s * 0.32, s * 0.3), 0, 180 * 16)          # handle
+    p.restore()
+    sx, sy = hx + side * s * 0.5, hy + s * 0.1
+    p.setPen(Qt.PenStyle.NoPen)
+    for i in range(12):
+        ph = (t * 2.4 + i / 12) % 1.0
+        x = sx + side * (ph * s * 0.35) + (i % 3 - 1) * 1.5
+        p.setBrush(QColor(120, 190, 255, int(210 * (1 - ph * 0.6))))
+        p.drawEllipse(QPointF(x, sy + (floor - sy) * ph), 1.4, 2.2)
+
+
+class Plant(Thing):
+    """A flower in a little pot on the taskbar. She plants and waters it; it grows from a seed to a bloom."""
+
+    def __init__(self, play, scale, flower: str = "", g: float = 0.0, thirst: float = 0.0):
+        flower = flower or random.choice(list(FLOWERS))
+        self.tree = flower in TREES
+        size = (120, 190) if self.tree else (64, 104)
+        super().__init__(play, "plant", int(size[0] * scale), int(size[1] * scale))
+        self.scale = scale
+        self.flower = flower
+        self.g = g                   # growth 0 (seed) .. 1 (full bloom)
+        self.thirst = thirst         # > 1: needs water (droops, grows slowly)
+        self.radius = 10 * scale
+        self.wiggle = 0.0
+        self.dying = 0.0
+        self.petals: list[list[float]] = []
+        self.sparkle = 0.0
+        self._bloomed = g >= 0.85
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    # growth -------------------------------------------------------------------
+    def physics(self, dt: float) -> None:            # glued to the taskbar
+        self.t += dt
+        self.say_t = max(0.0, self.say_t - dt)
+        self.hearts = max(0.0, self.hearts - dt)
+        self.wiggle *= max(0.0, 1 - dt * 3)
+        self.sparkle = max(0.0, self.sparkle - dt)
+        if self.dying > 0:
+            self.dying += dt
+            for pt in self.petals:
+                pt[0] += pt[2] * dt
+                pt[1] += pt[3] * dt
+                pt[3] += 220 * dt
+                pt[4] += pt[5] * dt
+            if self.dying > 1.6:
+                self.play.drop_thing(self)
+            return
+        minutes = max(1.0, getattr(self.play.cfg, "garden_minutes", 30.0)) * (1.6 if self.tree else 1.0)
+        self.g = min(1.0, self.g + dt / (minutes * 60) * (1.0 if self.thirst < 1.0 else 0.3))
+        self.thirst += dt / 900.0
+        if self.g >= 0.85 and not self._bloomed:
+            self._bloomed = True
+            self.sparkle = 2.0
+            self.play.event.emit("plant_bloom", self.flower)
+
+    def water(self) -> None:
+        if self.thirst > 0.3 or self.g < 0.02:      # a real drink helps it grow a little
+            self.g = min(1.0, self.g + 0.04)
+        self.thirst = 0.0
+        self.sparkle = 1.2
+        self.wiggle = 0.6
+
+    # you and the plant --------------------------------------------------------
+    def mousePressEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.RightButton:
+            self.play.menu_requested.emit(e.globalPosition().toPoint())
+            return
+        if e.button() == Qt.MouseButton.LeftButton and self.dying <= 0:
+            self._pressed = True
+            self._press_t = time.monotonic()
+            self._press_g = e.globalPosition()
+
+    def mouseMoveEvent(self, e) -> None:
+        if self._pressed and self.dying <= 0 and (e.globalPosition() - self._press_g).manhattanLength() > 10:
+            self._pressed = False
+            self.destroy("uprooted")              # you yanked it out!
+            return
+        if not self._pressed and self.dying <= 0 and self._last_hover is not None:
+            self._rub += (e.position() - self._last_hover).manhattanLength()
+            if self._rub > 200:
+                self._rub = 0.0
+                self.on_pet()
+        self._last_hover = e.position()
+
+    def mouseReleaseEvent(self, e) -> None:
+        if not self._pressed:
+            return
+        self._pressed = False
+        if time.monotonic() - self._press_t > 1.1:
+            self.destroy("squashed")              # held down until it's crushed
+        else:
+            self.wiggle = 1.0
+            self.say(random.choice(["♪", "✿", "~"]), 0.8)
+            self.play.event.emit("plant_poked", self.flower)
+
+    def mouseDoubleClickEvent(self, e) -> None:
+        self.on_pet()
+
+    def on_pet(self) -> None:
+        if self.dying > 0:
+            return
+        self.hearts = 2.0
+        self.wiggle = 0.7
+        self.play.event.emit("plant_loved", self.flower)
+
+    def destroy(self, how: str) -> None:
+        if self.dying > 0:
+            return
+        self.dying = 0.01
+        col = (TREES[self.flower][0] if self.tree else FLOWERS[self.flower][0])
+        for i in range((16 if self.tree else 10) if self.g > 0.6 else 4):
+            self.petals.append([self.width() / 2, self.height() * 0.3, random.uniform(-90, 90),
+                                random.uniform(-160, -40), random.uniform(0, 6), random.uniform(-8, 8),
+                                0 if i % 3 else 1])
+        self.play.plant_destroyed(self, how)
+        del col
+
+    # drawing --------------------------------------------------------------------
+    def draw(self, p: QPainter) -> None:
+        if self.tree:
+            self._draw_tree(p)
+            return
+        w, h = self.width(), self.height()
+        s = self.scale
+        cx, base = w / 2, h - 2
+        petal, centre, n = FLOWERS[self.flower]
+        fade = max(0.0, 1.0 - self.dying / 1.2) if self.dying > 0 else 1.0
+        p.setOpacity(fade)
+        # pot
+        pot_top = base - 22 * s
+        pot = QPainterPath()
+        pot.moveTo(cx - 14 * s, pot_top)
+        pot.lineTo(cx + 14 * s, pot_top)
+        pot.lineTo(cx + 10 * s, base)
+        pot.lineTo(cx - 10 * s, base)
+        pot.closeSubpath()
+        p.setPen(_pen("#8a4b2a", max(1.0, s)))
+        p.setBrush(QColor("#d9784a"))
+        p.drawPath(pot)
+        p.setBrush(QColor("#e88b5c"))
+        p.drawRoundedRect(QRectF(cx - 16 * s, pot_top - 4 * s, 32 * s, 6 * s), 2, 2)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#5b3a26"))
+        p.drawEllipse(QPointF(cx, pot_top - 3 * s), 12 * s, 2.6 * s)                 # soil
+        g = self.g
+        if self.dying > 0:
+            p.save()
+            p.translate(cx, pot_top - 3 * s)
+            p.rotate(min(80.0, self.dying * 140))                                      # it keels over
+            p.translate(-cx, -(pot_top - 3 * s))
+        sway = math.sin(self.t * 1.6) * 3 + math.sin(self.t * 9) * 8 * self.wiggle
+        droop = min(1.0, max(0.0, self.thirst - 1.0)) * 18
+        top_y = pot_top - 3 * s
+        if g < 0.1:                                                                    # a seed
+            p.setBrush(QColor("#c49a5a"))
+            p.drawEllipse(QPointF(cx, top_y - 1.5 * s), 2.5 * s, 1.8 * s)
+        else:
+            frac = min(1.0, (g - 0.1) / 0.75)
+            stem_h = (8 + 58 * frac) * s
+            tip = QPointF(cx + sway * frac + droop * 0.6, top_y - stem_h + droop * 0.5)
+            stem = QPainterPath()
+            stem.moveTo(cx, top_y)
+            stem.quadTo(QPointF(cx + sway * 0.3, top_y - stem_h * 0.5), tip)
+            woody = self.flower == "sakura"
+            p.setPen(_pen("#7a4f2e" if woody else "#4caf50", max(1.5, (2.6 if woody else 2.0) * s)))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(stem)
+            p.setPen(_pen("#2e7d32", max(0.8, 0.8 * s)))
+            p.setBrush(QColor("#66bb6a"))
+            leaves = 2 if g < 0.35 else 4
+            for i in range(leaves):                                                   # leaves along the stem
+                f = 0.2 + 0.18 * i
+                lp = stem.pointAtPercent(min(0.95, f))
+                side = -1 if i % 2 else 1
+                p.save()
+                p.translate(lp)
+                p.rotate(side * (55 - droop) + sway * 0.5)
+                p.drawEllipse(QRectF(0 if side > 0 else -11 * s * (0.6 + 0.4 * frac), -2.6 * s,
+                                     11 * s * (0.6 + 0.4 * frac), 5.2 * s))
+                p.restore()
+            if g >= 0.65:
+                open_ = min(1.0, max(0.0, (g - 0.85) / 0.15))
+                if woody:                                                             # sakura sapling: blossoms on twigs
+                    p.setPen(_pen("#7a4f2e", max(1.0, 1.4 * s)))
+                    twigs = [stem.pointAtPercent(f) for f in (0.55, 0.75, 0.95)]
+                    for i, tw in enumerate(twigs):
+                        end = tw + QPointF((-1) ** i * 10 * s, -8 * s)
+                        p.drawLine(tw, end)
+                        self._blossom(p, end, 4.5 * s * (0.4 + 0.6 * open_), petal, centre, 5, open_)
+                    self._blossom(p, tip, 5 * s * (0.4 + 0.6 * open_), petal, centre, 5, open_)
+                elif open_ <= 0:                                                      # a bud
+                    p.setPen(_pen("#2e7d32", max(0.8, 0.8 * s)))
+                    p.setBrush(QColor(petal))
+                    p.drawEllipse(tip, 3.5 * s, 5 * s)
+                else:
+                    size = {"sunflower": 11, "tulip": 8, "daisy": 8, "bluebell": 6}.get(self.flower, 8) * s
+                    self._blossom(p, tip, size * (0.5 + 0.5 * open_), petal, centre, n, open_,
+                                  tulip=self.flower == "tulip")
+        if self.dying > 0:
+            p.restore()
+        p.setOpacity(1.0)
+        for x, y, _vx, _vy, rot, _vr, kind in self.petals:                           # petals scattering
+            p.save()
+            p.translate(x, y)
+            p.rotate(math.degrees(rot))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(petal) if not kind else QColor("#66bb6a"))
+            p.drawEllipse(QRectF(-3 * s, -1.6 * s, 6 * s, 3.2 * s))
+            p.restore()
+        if self.sparkle > 0:
+            p.setPen(QPen(QColor(255, 255, 255, int(255 * min(1.0, self.sparkle))), 1.2))
+            for i in range(4):
+                ph = (self.t * 1.2 + i / 4) % 1.0
+                x, y = cx + (i - 1.5) * 9 * s, h * 0.45 - ph * 20
+                p.drawLine(QPointF(x - 3, y), QPointF(x + 3, y))
+                p.drawLine(QPointF(x, y - 3), QPointF(x, y + 3))
+        if self.thirst > 1.0 and self.dying <= 0:                                     # "water me!" drop
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(110, 170, 255, 200))
+            p.drawEllipse(QPointF(cx + 14 * s, h * 0.3 + math.sin(self.t * 3) * 2), 2.5 * s, 3.4 * s)
+
+    def _draw_tree(self, p: QPainter) -> None:
+        w, h = self.width(), self.height()
+        s = self.scale
+        cx, base = w / 2, h - 2
+        leaf, dark, extra = TREES[self.flower]
+        fade = max(0.0, 1.0 - self.dying / 1.2) if self.dying > 0 else 1.0
+        p.setOpacity(fade)
+        # wooden planter box
+        box_top = base - 18 * s
+        p.setPen(_pen("#6b4226", max(1.0, s)))
+        p.setBrush(QColor("#a8703f"))
+        p.drawRect(QRectF(cx - 22 * s, box_top, 44 * s, 18 * s))
+        p.setPen(_pen("#8a5a32", max(0.8, 0.8 * s)))
+        for i in (1, 2):
+            p.drawLine(QPointF(cx - 22 * s, box_top + i * 6 * s), QPointF(cx + 22 * s, box_top + i * 6 * s))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#5b3a26"))
+        p.drawEllipse(QPointF(cx, box_top), 19 * s, 3 * s)
+        g = self.g
+        if self.dying > 0:
+            p.save()
+            p.translate(cx, box_top)
+            p.rotate(min(85.0, self.dying * 120))                 # timber~
+            p.translate(-cx, -box_top)
+        sway = math.sin(self.t * 1.1) * 2.5 + math.sin(self.t * 8) * 7 * self.wiggle
+        droop = min(1.0, max(0.0, self.thirst - 1.0))
+        if g < 0.08:                                               # seed
+            p.setBrush(QColor("#c49a5a"))
+            p.drawEllipse(QPointF(cx, box_top - 2 * s), 3 * s, 2 * s)
+        else:
+            grow = min(1.0, (g - 0.08) / 0.8)
+            trunk_h = (12 + 110 * grow) * s
+            top = QPointF(cx + sway * grow * 0.6, box_top - trunk_h)
+            tw = (1.5 + 6 * grow) * s
+            trunk = QPainterPath()
+            trunk.moveTo(cx - tw, box_top)
+            trunk.quadTo(cx - tw * 0.8, box_top - trunk_h * 0.5, top.x() - tw * 0.4, top.y())
+            trunk.lineTo(top.x() + tw * 0.4, top.y())
+            trunk.quadTo(cx + tw * 0.8, box_top - trunk_h * 0.5, cx + tw, box_top)
+            trunk.closeSubpath()
+            p.setPen(_pen("#5a3a22", max(0.8, s)))
+            p.setBrush(QColor("#8a5a32"))
+            p.drawPath(trunk)
+            if grow < 0.25:                                        # sapling: a few leaves
+                p.setPen(_pen("#2e7d32", max(0.8, 0.8 * s)))
+                p.setBrush(QColor(leaf))
+                for i, side in enumerate((-1, 1, -1)):
+                    lp = QPointF(top.x(), top.y() + i * 5 * s)
+                    p.drawEllipse(QRectF(lp.x() + (0 if side > 0 else -10 * s), lp.y() - 2.5 * s, 10 * s, 5 * s))
+            else:
+                r = (12 + 34 * grow) * s * (1 - droop * 0.1)
+                cc = QPointF(top.x(), top.y() - r * 0.3)
+                p.setPen(Qt.PenStyle.NoPen)
+                if self.flower == "pine":                          # stacked triangles
+                    for i in range(3):
+                        y0 = cc.y() + r * 0.9 - i * r * 0.62
+                        wdt = r * (1.15 - i * 0.28)
+                        tri = QPainterPath()
+                        tri.moveTo(cc.x() + sway * 0.3 * i, y0 - r * 0.85)
+                        tri.lineTo(cc.x() - wdt, y0)
+                        tri.lineTo(cc.x() + wdt, y0)
+                        tri.closeSubpath()
+                        p.setBrush(QColor(dark if i % 2 else leaf))
+                        p.drawPath(tri)
+                else:                                              # round leafy canopy
+                    blobs = [(0, 0, 1.0), (-0.55, 0.25, 0.7), (0.55, 0.25, 0.7), (-0.3, -0.45, 0.65), (0.32, -0.42, 0.62)]
+                    for dx, dy, k in blobs:
+                        p.setBrush(QColor(dark))
+                        p.drawEllipse(QPointF(cc.x() + dx * r + 1.5 * s, cc.y() + dy * r + 2 * s), r * 0.55 * k, r * 0.5 * k)
+                    for dx, dy, k in blobs:
+                        p.setBrush(QColor(leaf))
+                        p.drawEllipse(QPointF(cc.x() + dx * r, cc.y() + dy * r), r * 0.55 * k, r * 0.5 * k)
+                    p.setBrush(QColor(255, 255, 255, 50))
+                    p.drawEllipse(QPointF(cc.x() - r * 0.25, cc.y() - r * 0.35), r * 0.3, r * 0.18)
+                    if extra and g >= 0.85:                        # apples / blossoms
+                        rng = random.Random(hash(self.flower) & 0xffff)
+                        p.setBrush(QColor(extra))
+                        for _ in range(9 if self.flower == "apple" else 16):
+                            a = rng.uniform(0, math.tau)
+                            d = rng.uniform(0.1, 0.85) * r
+                            x, y = cc.x() + math.cos(a) * d, cc.y() + math.sin(a) * d * 0.8
+                            p.drawEllipse(QPointF(x, y), (2.6 if self.flower == "apple" else 1.6) * s,
+                                          (2.6 if self.flower == "apple" else 1.6) * s)
+                        if self.flower == "cherry":                # petals drifting down
+                            for i in range(4):
+                                ph = (self.t * 0.25 + i / 4) % 1.0
+                                p.setBrush(QColor(255, 183, 208, int(220 * (1 - ph))))
+                                p.drawEllipse(QPointF(cc.x() - r + i * r * 0.6 + math.sin(self.t + i) * 6,
+                                                      cc.y() + r * 0.4 + ph * (box_top - cc.y())), 2 * s, 1.3 * s)
+        if self.dying > 0:
+            p.restore()
+        p.setOpacity(1.0)
+        for x, y, _vx, _vy, rot, _vr, kind in self.petals:
+            p.save()
+            p.translate(x, y)
+            p.rotate(math.degrees(rot))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(leaf) if not kind else QColor("#8a5a32"))
+            p.drawEllipse(QRectF(-3.5 * s, -2 * s, 7 * s, 4 * s))
+            p.restore()
+        if self.sparkle > 0:
+            p.setPen(QPen(QColor(255, 255, 255, int(255 * min(1.0, self.sparkle))), 1.2))
+            for i in range(5):
+                ph = (self.t * 1.2 + i / 5) % 1.0
+                x, y = cx + (i - 2) * 14 * s, h * 0.4 - ph * 24
+                p.drawLine(QPointF(x - 3, y), QPointF(x + 3, y))
+                p.drawLine(QPointF(x, y - 3), QPointF(x, y + 3))
+        if self.thirst > 1.0 and self.dying <= 0:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(110, 170, 255, 200))
+            p.drawEllipse(QPointF(cx + 26 * s, h * 0.55 + math.sin(self.t * 3) * 2), 2.5 * s, 3.4 * s)
+
+    @staticmethod
+    def _blossom(p, at, r, petal, centre, n, open_, tulip=False):
+        p.setPen(_pen(QColor(petal).darker(130), 0.8))
+        p.setBrush(QColor(petal))
+        if tulip:
+            cup = QPainterPath()
+            cup.moveTo(at.x() - r, at.y() - r * 0.2)
+            cup.quadTo(at.x() - r, at.y() + r, at.x(), at.y() + r)
+            cup.quadTo(at.x() + r, at.y() + r, at.x() + r, at.y() - r * 0.2)
+            cup.lineTo(at.x() + r * 0.5, at.y() - r * (0.4 + 0.5 * open_))
+            cup.lineTo(at.x(), at.y() - r * 0.1)
+            cup.lineTo(at.x() - r * 0.5, at.y() - r * (0.4 + 0.5 * open_))
+            cup.closeSubpath()
+            p.drawPath(cup)
+            return
+        for i in range(n):
+            a = i / n * math.tau
+            px, py = at.x() + math.cos(a) * r * 0.7 * open_, at.y() + math.sin(a) * r * 0.7 * open_
+            p.save()
+            p.translate(px, py)
+            p.rotate(math.degrees(a))
+            p.drawEllipse(QRectF(-r * 0.45, -r * 0.22, r * 0.9, r * 0.44))
+            p.restore()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(centre))
+        p.drawEllipse(at, r * 0.32, r * 0.32)
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.draw(p)
+        w = self.width()
+        if self.hearts > 0:
+            for i in range(2):
+                ph = (self.t * 0.9 + i / 2) % 1.0
+                col = QColor("#ff5c8a")
+                col.setAlphaF(min(1.0, self.hearts) * (1 - ph))
+                _heart(p, w * (0.35 + 0.3 * i), self.height() * 0.35 - ph * 20, 8, col)
+        if self.say_t > 0:
+            p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            p.setPen(QColor("#5a3550"))
+            p.drawText(QRectF(0, 0, w, 14), Qt.AlignmentFlag.AlignHCenter, self.say_text)
+        p.end()
+
+
+class Mess(Thing):
+    """The puddle she left on the taskbar after being shaken too hard. It stays put until she cleans it."""
+
+    def __init__(self, play, scale):
+        super().__init__(play, "mess", int(120 * scale), int(40 * scale))
+        self.scale = scale
+        self.radius = 8 * scale
+        self.clean = 1.0             # 1 = fresh puddle, 0 = gone
+        self.grow = 0.0
+        self.scrub = 0.0             # > 0 while she's mopping (bubbles + sparkles)
+        self.spray = 0.0
+        rng = random.Random()
+        self.blobs = [(rng.uniform(-0.35, 0.35), rng.uniform(0.5, 1.0), rng.uniform(0.5, 1.0)) for _ in range(5)]
+        self.bits = [(rng.uniform(-0.38, 0.38), rng.uniform(-0.3, 0.3), rng.random()) for _ in range(9)]
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def physics(self, dt: float) -> None:            # glued to the taskbar
+        self.t += dt
+        self.grow = min(1.0, self.grow + dt * 2.5)
+        self.scrub = max(0.0, self.scrub - dt)
+        self.spray = max(0.0, self.spray - dt)
+        self.say_t = max(0.0, self.say_t - dt)
+
+    def mousePressEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.say("eww", 1.0)
+            self.play.event.emit("mess_poked", "mess")
+
+    def mouseMoveEvent(self, e) -> None:
+        pass
+
+    def mouseReleaseEvent(self, e) -> None:
+        pass
+
+    def mouseDoubleClickEvent(self, e) -> None:
+        pass
+
+    def draw(self, p: QPainter) -> None:
+        w, h = self.width(), self.height()
+        s = self.scale
+        k = max(0.0, self.clean) * (0.3 + 0.7 * self.grow)
+        if k <= 0.01:
+            return
+        cx, base = w / 2, h - 2
+        a = min(1.0, self.clean * 1.6)
+        p.setPen(QPen(QColor(150, 132, 52, int(220 * a)), 1.0))
+        p.setBrush(QColor(206, 192, 98, int(235 * a)))
+        path = QPainterPath()
+        for dx, sw, sh in self.blobs:                 # an irregular puddle
+            path.addEllipse(QPointF(cx + dx * w * 0.6 * k, base - 4 * s), w * 0.22 * sw * k, 4.5 * s * sh * (0.6 + 0.4 * k))
+        p.drawPath(path.simplified())
+        p.setPen(Qt.PenStyle.NoPen)
+        for dx, dy, c in self.bits:                   # lumpy bits
+            p.setBrush(QColor(170, 146, 62, int(230 * a)) if c < 0.5 else QColor(236, 220, 150, int(230 * a)))
+            p.drawEllipse(QPointF(cx + dx * w * 0.6 * k, base - 4 * s + dy * 6 * s), 1.6 * s, 1.2 * s)
+        p.setBrush(QColor(255, 255, 255, int(110 * a)))
+        p.drawEllipse(QPointF(cx - w * 0.1 * k, base - 6 * s), w * 0.08 * k, 1.3 * s)
+        if self.clean > 0.5 and self.scrub <= 0:      # cartoon stink lines
+            p.setPen(QPen(QColor(140, 170, 90, 120), 1.2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            for i in (-1, 1):
+                path = QPainterPath()
+                x0 = cx + i * w * 0.12
+                ph = (self.t * 0.6 + (i + 1) * 0.25) % 1.0
+                path.moveTo(x0, base - 8 * s - ph * 6)
+                for j in range(1, 6):
+                    path.lineTo(x0 + math.sin(j * 1.6 + self.t * 3) * 3, base - 8 * s - ph * 6 - j * 3.2 * s)
+                p.drawPath(path)
+        if self.scrub > 0 or self.spray > 0:          # soap bubbles + sparkles
+            for i in range(8):
+                ph = (self.t * 0.9 + i / 8) % 1.0
+                x = cx + (i - 3.5) * w * 0.09 * k + math.sin(self.t * 3 + i) * 3
+                y = base - 5 * s - ph * h * 0.7
+                p.setPen(QPen(QColor(255, 255, 255, int(220 * (1 - ph))), 1.0))
+                p.setBrush(QColor(200, 235, 255, int(70 * (1 - ph))))
+                p.drawEllipse(QPointF(x, y), 1.5 + (i % 3) * 1.2, 1.5 + (i % 3) * 1.2)
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.draw(p)
+        if self.say_t > 0:
+            p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            p.setPen(QColor("#5a3550"))
+            p.drawText(QRectF(0, 0, self.width(), 14), Qt.AlignmentFlag.AlignHCenter, self.say_text)
+        p.end()
+
+
 # ------------------------------------------------------------------------------------------- manager
 class Playground(QObject):
     """Owns the pets & toys, runs their physics and how they interact with her."""
@@ -993,6 +1526,77 @@ class Playground(QObject):
     def restore(self) -> None:
         for k in list(getattr(self.cfg, "companions", []) or []):
             self.add(k, announce=False)
+        for d in list(getattr(self.cfg, "plants", []) or []):
+            try:
+                self._spawn_plant(float(d["x"]), d.get("flower", ""), float(d.get("g", 0.0)), float(d.get("thirst", 0.0)))
+            except Exception:
+                pass
+
+    # garden ------------------------------------------------------------------
+    def plants(self) -> list["Plant"]:
+        return [t for t in self.things if isinstance(t, Plant) and t.dying <= 0]
+
+    def _spawn_plant(self, gx: float, flower: str = "", g: float = 0.0, thirst: float = 0.0) -> "Plant":
+        pl = Plant(self, max(0.6, self.cfg.scale), flower, g, thirst)
+        pl.place(gx)
+        pl.show()
+        self.things.append(pl)
+        return pl
+
+    def save_garden(self) -> None:
+        self.cfg.plants = [{"x": round(t.center().x()), "flower": t.flower, "g": round(t.g, 3),
+                            "thirst": round(t.thirst, 3)} for t in self.plants()]
+        try:
+            self.cfg.save()
+        except Exception:
+            pass
+
+    def plant_spot(self, tree: bool = False) -> float | None:
+        """A free spot on the taskbar near her for a new flower."""
+        her = self.c.global_rect().center().x()
+        scr = QGuiApplication.screenAt(self.c.global_rect().center()) or QGuiApplication.primaryScreen()
+        a = scr.availableGeometry()
+        taken = [(t.center().x(), getattr(t, "tree", False)) for t in self.things if isinstance(t, (Plant, Mess))]
+        gap = 125 if tree else 75
+        last = getattr(self, "_last_spot", None)
+        for i in range(40):
+            if tree and last is not None and i < 12:               # a row: the next tree beside the last one
+                x = last + random.choice((-1, 1)) * random.uniform(gap, gap + 40)
+            else:
+                x = her + random.choice((-1, 1)) * random.uniform(120, 460)
+            if a.left() + 50 < x < a.right() - 50 and all(abs(x - o) > (125 if (tree or ot) else 75) for o, ot in taken):
+                return x
+        return None
+
+    def plant_trees(self, n: int = 3) -> bool:
+        """Plant a row of trees, one by one."""
+        self._plant_queue = max(0, n - 1)
+        self._last_spot = None
+        return self.start_activity("plant", species="tree")
+
+    def drop_thing(self, t: Thing) -> None:
+        if t in self.things:
+            self.things.remove(t)
+        t.hide()
+        t.deleteLater()
+        if isinstance(t, Plant):
+            self.save_garden()
+
+    def plant_destroyed(self, pl: "Plant", how: str) -> None:
+        if self._act is not None and self._act.get("t") is pl:
+            self._end_act()
+        self.event.emit("plant_removed" if how == "removed" else "plant_destroyed", pl.flower)
+        QTimer.singleShot(1700, self.save_garden)
+
+    def remove_plants(self) -> None:
+        """You took her garden away (menu). She won't like that."""
+        ps = self.plants()
+        for i, pl in enumerate(ps):
+            pl.dying = 0.01 if i else 0.0
+            if i:
+                pl.petals = []
+        if ps:
+            ps[0].destroy("removed")
 
     def _save(self) -> None:
         self.cfg.companions = [k for k in self.kinds() if k in LABELS]
@@ -1164,9 +1768,11 @@ class Playground(QObject):
         now = time.perf_counter()
         dt = max(1e-3, min(0.1, now - self._last))
         self._last = now
-        if not self.things:
-            return
-        for t in self.things:
+        self._garden_save_t = getattr(self, "_garden_save_t", 0.0) + dt
+        if self._garden_save_t > 30 and self.plants():
+            self._garden_save_t = 0.0
+            self.save_garden()
+        for t in list(self.things):
             if not t.isVisible():
                 continue
             before = t.center()
@@ -1174,7 +1780,7 @@ class Playground(QObject):
             t.think(dt)
             t.update()
             # flying into her (swept along its path, so fast throws can't skip through her)
-            if t.flying and not t.dragging and t.carried_by is None and t.cooldown <= 0 and t.speed() > 350:
+            if t.kind not in ("mess", "plant") and t.flying and not t.dragging and t.carried_by is None and t.cooldown <= 0 and t.speed() > 350:
                 lp = None
                 after = t.center()
                 steps = max(1, int((after - before).manhattanLength() / max(6.0, t.radius * 0.6)))
@@ -1216,12 +1822,39 @@ class Playground(QObject):
             if pets:
                 opts += [("party", None)] * 2
             opts += [("read", None), ("tea", None), ("exercise", None)]   # things she does on her own
+            if len(self.plants()) < 5:
+                opts += [("plant", None)] * 2
+            thirsty = [t for t in self.plants() if t.thirst > 0.8]
+            opts += [("water", t) for t in thirsty] * 3
         return opts
 
-    def start_activity(self, name: str, target: Thing | None = None) -> bool:
+    def add_mess(self, gx: float) -> Mess:
+        """She threw up: a puddle lands on the taskbar at global x."""
+        old = self.get("mess")
+        if old is not None:
+            old.clean = min(1.0, old.clean + 0.5)
+            old.grow = 0.0
+            return old
+        m = Mess(self, max(0.6, self.cfg.scale))
+        m.place(gx)
+        m.show()
+        self.things.append(m)
+        return m
+
+    def clean_up(self) -> None:
+        """After throwing up she looks at the mess, then cleans it with a spray bottle and a mop."""
+        m = self.get("mess")
+        if m is None:
+            return
+        if self._act is not None:
+            self._end_act()
+        if not self.start_activity("clean", m, force=True):
+            QTimer.singleShot(3000, self.clean_up)
+
+    def start_activity(self, name: str, target: Thing | None = None, force: bool = False, species: str = "") -> bool:
         """Begin one of her activities (also used by the menu). Returns False if she can't now."""
         c = self.c
-        if not self._her_free() or c.busy or c.talking or c.sulking:
+        if not self._her_free() or c.sulking or (not force and (c.busy or c.talking)):
             return False
         if target is None and name in ("pet", "cuddle", "treat"):
             pets = [t for t in self.things if isinstance(t, Pet) and t.isVisible()]
@@ -1230,14 +1863,31 @@ class Playground(QObject):
             target = self.get("ball") or self.get("yarn")
         if target is None and name == "yarn":
             target = self.get("yarn")
-        if target is None and name not in ("party", "read", "tea", "exercise"):
+        if target is None and name == "water":
+            ps = sorted(self.plants(), key=lambda t: -t.thirst)
+            target = ps[0] if ps else None
+        if target is None and name not in ("party", "read", "tea", "exercise", "plant"):
             return False
+        if name == "plant":
+            if not species:
+                species = "tree" if random.random() < 0.3 else "flower"
+            spot = self.plant_spot(species == "tree")
+            if spot is None:
+                self._plant_queue = 0
+                return False
         if name == "party" and not any(isinstance(t, Pet) for t in self.things):
             return False
         if c.user_pose:
             c.stand_up()
         self._act = {"name": name, "t": target, "stage": "go" if target is not None else "do", "time": 16.0, "k": 0.0}
-        if target is not None:
+        if name == "plant":
+            her = c.global_rect().center().x()
+            side = 1.0 if spot >= her else -1.0
+            kind = random.choice(list(TREES)) if species == "tree" else random.choice(list(FLOWERS))
+            self._act.update(stage="go", spot=spot, goal_x=spot - side * self._reach() * (1.4 if species == "tree" else 1.0),
+                             time=20.0, species=kind)
+            c.walk_to(self._act["goal_x"])
+        elif target is not None:
             c.walk_to(self._spot(name, target))
         else:
             self._begin(self._act)          # nothing to walk to: start right away
@@ -1250,6 +1900,12 @@ class Playground(QObject):
         if name in ("pet", "treat"):      # stand beside the pet, not on it
             side = 1.0 if tx >= her else -1.0
             return tx - side * self._reach()
+        if name == "water":               # stand beside the flower
+            side = 1.0 if tx >= her else -1.0
+            return tx - side * self._reach() * 1.15
+        if name == "clean":               # step beside the puddle
+            side = 1.0 if tx >= her else -1.0
+            return tx - side * self._reach() * 1.25
         return tx
 
     def _reach(self) -> float:
@@ -1266,10 +1922,12 @@ class Playground(QObject):
         c = self.c
         self.party_t = max(0.0, self.party_t - dt)
         a = self._act
+        c.in_activity = a is not None
         if a is not None:
             a["time"] -= dt
             t = a["t"]
-            gone = t is not None and (t not in self.things or (not t.isVisible() and a["stage"] == "go") or t.dragging)
+            gone = t is not None and (t not in self.things or (not t.isVisible() and a["stage"] == "go") or t.dragging
+                                      or getattr(t, "dying", 0) > 0)
             if c.state in (DRAG, FALL, KNOCK, SLEEP) or c._dragging or a["time"] <= 0 or gone:
                 if a.get("pose") and c.user_pose == a["pose"]:
                     c.stand_up()
@@ -1279,7 +1937,7 @@ class Playground(QObject):
                 return
             name = a["name"]
             if a["stage"] == "go":
-                goal = self._spot(name, t)
+                goal = a["goal_x"] if "goal_x" in a else self._spot(name, t)
                 her = c.global_rect().center().x()
                 if abs(goal - her) > max(30.0, c.width() * 0.12):
                     if c.state != WALK and c.state in (IDLE, SIT):
@@ -1307,6 +1965,26 @@ class Playground(QObject):
     def _begin(self, a: dict) -> None:
         c, name, t = self.c, a["name"], a["t"]
         her = c.global_rect().center().x()
+        if name == "plant":
+            sd = "l" if a["spot"] >= her else "r"
+            a["side"], a["time"], a["pose"] = sd, 7.5, f"pet_{sd}"
+            c.act_pose(a["pose"], 7.5)                      # kneels down and digs a little hole
+            self.event.emit("tree_start" if a.get("species") in TREES else "plant_start", "")
+            return
+        if name == "water" and isinstance(t, Plant):
+            sd = "l" if t.center().x() >= her else "r"
+            a["side"], a["time"], a["pose"] = sd, 3.4, f"spray_{sd}"
+            c.act_pose(a["pose"], 3.2)
+            c.hold("can", 3.0)
+            self.event.emit("water", t.flower)
+            return
+        if name == "clean":
+            sd = "l" if t.center().x() >= her else "r"
+            a["side"], a["time"] = sd, 12.5
+            a["pose"] = f"eww_{sd}"
+            c.act_pose(a["pose"], 12.5)
+            self.event.emit("clean_eww", "")
+            return
         if name == "pet" and isinstance(t, Pet):
             side = 1.0 if t.center().x() >= her else -1.0
             # the pet comes right under her hand, facing her
@@ -1379,6 +2057,68 @@ class Playground(QObject):
 
     def _during(self, a: dict, dt: float) -> None:
         t = a["t"]
+        if a["name"] == "plant":
+            c, k, sd = self.c, a["k"], a["side"]
+            if k >= 2.2 and "plant" not in a:
+                a["plant"] = self._spawn_plant(a["spot"], a.get("species", ""))
+                self._last_spot = a["spot"]
+                self.save_garden()
+            if k >= 2.6 and not a.get("watering"):
+                a["watering"] = True
+                c.act_pose(f"spray_{sd}", 4.0)
+                a["pose"] = f"spray_{sd}"
+                c.hold("can", 2.8)
+            if k >= 3.2 and a.get("plant") is not None and not a.get("watered"):
+                a["watered"] = True
+                a["plant"].water()
+            if k >= 5.6:
+                c.release_hold()
+                c.stand_up()
+                c.set_emotion("happy", 4.0)
+                self.event.emit("plant_done", a["plant"].flower if a.get("plant") else "")
+                self._end_act()
+                if getattr(self, "_plant_queue", 0) > 0:          # next tree in the row
+                    self._plant_queue -= 1
+                    QTimer.singleShot(900, lambda: self.start_activity("plant", species="tree", force=True))
+            return
+        if a["name"] == "water" and isinstance(t, Plant):
+            if a["k"] >= 0.8 and not a.get("watered"):
+                a["watered"] = True
+                t.water()
+            if a["k"] >= 3.0:
+                self.c.release_hold()
+                self.c.stand_up()
+                self.save_garden()
+                self._end_act()
+            return
+        if a["name"] == "clean" and isinstance(t, Mess):
+            c, k, sd = self.c, a["k"], a["side"]
+            if 1.8 <= k < 3.6 and not a.get("spray"):
+                a["spray"] = True
+                c.act_pose(f"spray_{sd}", 11.0)
+                a["pose"] = f"spray_{sd}"
+                c.hold("spray", 1.8)
+                self.event.emit("clean_spray", "")
+            if 1.8 <= k < 3.6:
+                t.spray = 0.3
+            if k >= 3.6 and not a.get("mop"):
+                a["mop"] = True
+                c.release_hold()
+                c.act_pose(f"mop_{sd}", 9.0)
+                a["pose"] = f"mop_{sd}"
+                c.hold("mop", 5.6)
+                self.event.emit("clean_mop", "")
+            if k >= 3.6:
+                t.scrub = 0.3
+                t.clean = max(0.0, 1.0 - (k - 3.6) / 5.2)
+            if k >= 9.2:
+                self.remove("mess")
+                c.release_hold()
+                c.stand_up()
+                c.set_emotion("happy", 4.0)
+                self.event.emit("clean_done", "")
+                self._end_act()
+            return
         if a["name"] == "pet" and isinstance(t, Pet):
             t.mode, t.mode_t = "wait", 1.0
             t.hearts = max(t.hearts, 1.5)

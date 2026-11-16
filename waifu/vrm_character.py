@@ -222,6 +222,36 @@ def body_pose(name: str, t: float, add, P: dict) -> tuple[float, str | None]:
             add(f"{side}UpperLeg", _rx(-bend * 0.6))
             add(f"{side}LowerLeg", _rx(bend))
         return 0.03 * abs(math.sin(ph * 2)), None
+    base, _, sd = name.rpartition("_")
+    if base in ("eww", "spray", "mop") and sd in ("l", "r"):
+        s = 1 if sd == "l" else -1
+        side, other = ("left", "right") if s > 0 else ("right", "left")
+        if base == "eww":       # looking down at the mess, hand over her mouth
+            P.update({f"{other}UpperArm": q_mul(q_mul(_rx(-28), _ry(-s * 28)), _rz(-s * 70)),
+                      f"{other}LowerArm": q_mul(_ry(-s * 122), _rz(s * 12))})
+            add("spine", _rx(-4))
+            add("head", q_mul(_rx(24), _rz(s * -8)))
+            return 0.0, None
+        if base == "spray":     # spritzing the mess with a spray bottle, other hand on her hip
+            squeeze = abs(math.sin(t * 6)) * 8
+            P.update({f"{side}UpperArm": q_mul(_rx(-52), _rz(s * -42)),
+                      f"{side}LowerArm": q_mul(_ry(s * -12), _rz(s * -8)),
+                      f"{side}Hand": _rx(-20 - squeeze),
+                      f"{other}UpperArm": q_mul(_rx(12), _rz(-s * -48)),
+                      f"{other}LowerArm": q_mul(_rz(-s * -78), _ry(s * 18))})
+            add("spine", _rx(12))
+            add("head", _rx(18))
+            return 0.0, None
+        # mop: both hands on the handle, scrubbing side to side
+        sw = math.sin(t * 7)
+        P.update(_arm_pair(-46 + sw * 6, -24, -60, -55, -6))
+        add("spine", q_mul(_rx(14), q_mul(_rz(sw * 5 * s), _ry(sw * 12))))
+        add("hips", _rz(-sw * 3))
+        add("head", _rx(16))
+        for leg, sgn in (("left", 1), ("right", -1)):
+            add(f"{leg}UpperLeg", _rx(-12))
+            add(f"{leg}LowerLeg", _rx(18))
+        return 0.03, None
     if name in ("pet_l", "pet_r"):  # crouching beside her pet, stroking it with one hand
         s = 1 if name == "pet_l" else -1
         side, other = ("left", "right") if s > 0 else ("right", "left")
@@ -257,6 +287,17 @@ def body_pose(name: str, t: float, add, P: dict) -> tuple[float, str | None]:
             P[f"{sd}UpperLeg"] = _rz(sgn * -13 * s)
             P[f"{sd}Foot"] = _rz(sgn * 13 * s)
         return 0.03 * (1 - s), None
+    if name == "sick":            # doubled over, hands on her knees: bleh
+        heave = abs(math.sin(t * 6)) * 7
+        P.update(_arm_pair(-40, -12, -76, -16, 0))          # hands braced on her knees
+        for sd, sgn in (("left", 1), ("right", -1)):
+            P[f"{sd}UpperLeg"] = q_mul(_rx(-30), _rz(sgn * -7))
+            P[f"{sd}LowerLeg"] = _rx(40)
+        add("spine", _rx(36 + heave))
+        add("chest", _rx(14))
+        add("neck", _rx(6))
+        add("head", _rx(4 + heave * 0.5))
+        return 0.12, None
     if name == "lie":             # lying on her back, one knee up, looking at you
         add("leftUpperLeg", _rx(-32))
         add("leftLowerLeg", _rx(58))
@@ -333,6 +374,9 @@ class VrmCharacter:
         self.off = np.zeros(3)                         # model position in world (metres)
         self.yaw = 0.0
         self.cur_pose: dict[str, np.ndarray] = {}
+        self.mid_pose: dict[str, np.ndarray] = {}      # two-stage smoothing: ease in AND out of every pose change
+        self._walk_ph = 0.0
+        self._walk_amp = 18.0
         self.hip_off = np.zeros(3)
         self.expr = {name: 0.0 for name in m.expressions}
         self.look = [0.0, 0.0]
@@ -595,19 +639,25 @@ class VrmCharacter:
             add("spine", _rz(-math.sin(t * 0.7) * 1.2))
 
         if state == WALK:
-            ph = t * math.tau * 1.7
+            ph, A = self._walk_ph, self._walk_amp
             s, c = math.sin(ph), math.cos(ph)
-            add("leftUpperLeg", _rx(-s * 26))
-            add("rightUpperLeg", _rx(s * 26))
-            add("leftLowerLeg", _rx(max(0.0, c) * 42 + 4))
-            add("rightLowerLeg", _rx(max(0.0, -c) * 42 + 4))
-            add("leftFoot", _rx(-max(0.0, c) * 12))
-            add("rightFoot", _rx(-max(0.0, -c) * 12))
-            P["leftUpperArm"] = q_mul(_rx(s * 22), P["leftUpperArm"])
-            P["rightUpperArm"] = q_mul(_rx(-s * 22), P["rightUpperArm"])
-            add("hips", _ry(s * 6))
-            add("spine", _ry(-s * 5))
-            hip[1] = -abs(c) * 0.018 * self.k
+            r = A / 26.0
+            add("leftUpperLeg", _rx(-s * A))
+            add("rightUpperLeg", _rx(s * A))
+            # the swinging leg lifts its knee; the standing leg stays almost straight
+            add("leftLowerLeg", _rx(max(0.0, c) ** 1.4 * 48 * r + 4))
+            add("rightLowerLeg", _rx(max(0.0, -c) ** 1.4 * 48 * r + 4))
+            # heel strike (toes up) as the leg lands, toe-off (heel up) as it leaves
+            add("leftFoot", _rx(-max(0.0, c) * 16 * r + max(0.0, s) * 8 * r))
+            add("rightFoot", _rx(-max(0.0, -c) * 16 * r + max(0.0, -s) * 8 * r))
+            P["leftUpperArm"] = q_mul(_rx(s * 24 * r), P["leftUpperArm"])
+            P["rightUpperArm"] = q_mul(_rx(-s * 24 * r), P["rightUpperArm"])
+            add("leftLowerArm", _ry(-max(0.0, s) * 18 * r))
+            add("rightLowerArm", _ry(max(0.0, -s) * 18 * r))
+            add("hips", q_mul(_ry(s * 7 * r), _rz(c * 3.5 * r)))     # pelvis turns and drops toward the swing leg
+            add("spine", q_mul(_ry(-s * 6 * r), _rx(3)))            # shoulders counter-rotate, slight lean
+            add("head", _ry(s * 3 * r))                              # head stays steady
+            hip[1] = -abs(s) * 0.02 * self.k * r                     # lowest when both feet are down
         elif state in (SIT, SLEEP):
             hips = self.m.bone_pos(self.m.rest_world, "hips")
             knee = self.m.bone_pos(self.m.rest_world, "leftLowerLeg")
@@ -711,9 +761,24 @@ class VrmCharacter:
             P.update(hold_pose("hug" if ctx.holding else "cross", t))
             if not ctx.holding and state in (IDLE, REACT):
                 hip[1] -= abs(math.sin(t * 5.0)) * 0.006 * self.k if int(t * 0.8) % 3 == 0 else 0.0   # stomp stomp
+        if ctx.land > 0.01 and state not in (DRAG, FALL, SLEEP, KNOCK, SIT):
+            L = ctx.land
+            for leg, sgn in (("left", 1), ("right", -1)):
+                add(f"{leg}UpperLeg", _rx(-L * 38))
+                add(f"{leg}LowerLeg", _rx(L * 70))
+                add(f"{leg}Foot", _rx(-L * 32))
+                P[f"{leg}UpperArm"] = q_mul(_rz(sgn * L * 22), P.get(f"{leg}UpperArm", IDENTITY_Q))   # arms out for balance
+            add("spine", _rx(L * 12))
+            add("head", _rx(-L * 6))
+            hips = self.m.bone_pos(self.m.rest_world, "hips")
+            hh = (hips[1] - self.m.min_y) if hips is not None else 0.5 * self.m.height
+            hip[1] -= hh * 0.16 * L
         if state not in (DRAG, FALL):
             self._manip_pose(P, add)
 
+        if ctx.sick > 0.3 and state not in (SLEEP,):
+            add("head", q_mul(_rz(math.sin(t * 4.0) * 12 * ctx.sick), _rx(math.cos(t * 4.0) * 6 * ctx.sick)))
+            add("spine", _rz(math.sin(t * 4.0 + 1) * 4 * ctx.sick))
         # looking at the cursor
         if state not in (SLEEP, DRAG):
             yaw, pitch = self.look[0] * 38, self.look[1] * 22
@@ -848,11 +913,16 @@ class VrmCharacter:
         self._sq_radius = (0.05 if small else 0.085) * self.m.height
         self._sq_target = 1.0
 
-    def hands_point(self) -> tuple[float, float] | None:
-        """Where her two hands are (window coordinates), for drawing what she holds."""
+    def feet_y(self) -> float:
+        """Window y where her feet touch the ground."""
+        return self.project(np.array([self.off[0] + self.m.center_x, self.off[1] + self.m.min_y, 0.0]))[1]
+
+    def hands_point(self, which: str | None = None) -> tuple[float, float] | None:
+        """Where her hands are (window coordinates), for drawing what she holds. which: left / right / None=both."""
         if self._W is None:
             return None
-        pts = [self.m.bone_pos(self._W, b) for b in ("leftHand", "rightHand")]
+        names = [f"{which}Hand"] * 2 if which else ["leftHand", "rightHand"]
+        pts = [self.m.bone_pos(self._W, b) for b in names]
         if any(p is None for p in pts):
             return None
         a, b = self.project(pts[0]), self.project(pts[1])
@@ -983,7 +1053,7 @@ class VrmCharacter:
             add("leftUpperLeg" if w > 0 else "rightUpperLeg", _rx(-abs(w) * 4))
             add("leftShoulder", _rz(math.sin(t * 2 * math.pi / 3.6) * 1.5))
         if state == WALK:
-            ph = t * math.tau * 1.7
+            ph = self._walk_ph
             add("leftLowerArm", _ry(-18 - max(0.0, math.sin(ph)) * 15))
             add("rightLowerArm", _ry(18 + max(0.0, -math.sin(ph)) * 15))
             add("chest", _ry(math.sin(ph) * 6))
@@ -1130,8 +1200,10 @@ class VrmCharacter:
             target_yaw = -40.0 if self.look[0] >= 0 else 40.0   # turns away from you, sulking
         elif ctx.angry > 0.3 and state in (IDLE, REACT):
             target_yaw = (-38.0 if self.look[0] >= 0 else 38.0) + ctx.user_yaw   # "hmph!" turns away
-        elif ctx.pose in ("pet_l", "pet_r") and state in (IDLE, REACT, PET):
-            target_yaw = 32.0 if ctx.pose == "pet_l" else -32.0                 # turns toward her pet
+        elif ctx.pose == "sick" and state in (IDLE, REACT, PET):
+            target_yaw = 42.0                                                  # side-on, so you see her double over
+        elif ctx.pose.rpartition("_")[0] in ("pet", "eww", "spray", "mop") and state in (IDLE, REACT, PET):
+            target_yaw = 32.0 if ctx.pose.endswith("_l") else -32.0            # turns toward her pet / the mess
         elif state in (SIT, SLEEP):
             target_yaw = 8.0 + ctx.user_yaw
         else:
@@ -1161,12 +1233,22 @@ class VrmCharacter:
             root = root @ rot_m4(R180)
 
         # pose (smoothly blended)
+        if state == WALK:
+            hips_r = self.m.bone_pos(self.m.rest_world, "hips")
+            leg = max(0.2, (hips_r[1] - self.m.min_y) if hips_r is not None else 0.45 * self.m.height)
+            speed = abs(vx) / max(1.0, self.ppm)                       # m/s
+            f = 1.15 + min(0.7, speed * 0.6)                            # steps per second (cadence)
+            amp = math.degrees(math.asin(min(0.85, speed / (f * 4 * leg) + 1e-6)))
+            self._walk_amp += (max(10.0, min(30.0, amp)) - self._walk_amp) * min(1.0, dt * 4)
+            self._walk_ph += f * math.tau * dt
         targets, hip = self._pose_targets(state, ctx)
-        a = min(1.0, dt * 10)
+        a = min(1.0, dt * (22 if state in (WALK, DRAG) or ctx.music else 12))
         bones = set(targets) | set(self.cur_pose)
         for b in bones:
             goal = targets.get(b, IDENTITY_Q)
-            self.cur_pose[b] = q_slerp(self.cur_pose.get(b, IDENTITY_Q), goal, a)
+            mid = q_slerp(self.mid_pose.get(b, self.cur_pose.get(b, IDENTITY_Q)), goal, a)
+            self.mid_pose[b] = mid
+            self.cur_pose[b] = q_slerp(self.cur_pose.get(b, IDENTITY_Q), mid, a)
         self.hip_off += (hip - self.hip_off) * a
         m = self.m
         m.reset_pose()

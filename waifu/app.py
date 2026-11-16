@@ -20,6 +20,7 @@ from .config import Config
 from .companions import LABELS as COMPANION_LABELS, NAMES as COMPANION_NAMES, PETS, TOYS, Playground
 from .emotion import ANGRY, AWAKE, HAPPY, HURT, LISTENING, SLEEPING, EmotionEngine
 from .poses import HELD as HELD_POSES, parse_command, pop_pose_tag
+from .singing import HUMS, VOICE_PRESETS, Singer
 from .database import Memory
 from .music import MusicListener, now_playing
 from .reactions import line
@@ -96,6 +97,10 @@ class WaifuApp(QObject):
         self.fg = vision.ForegroundTracker()
         self.camera = CameraWatcher(self.cfg.webcam_index)
         self.music = MusicListener()
+        self.singer = Singer(self.cfg)
+        self.memory.private = not self.cfg.can("memory")
+        self.fg.enabled = self.cfg.can("titles")
+        self._next_song = time.monotonic() + 120
 
         c = self.character
         c.moved.connect(self._follow)
@@ -141,6 +146,11 @@ class WaifuApp(QObject):
         self.camera.error.connect(self.on_error)
         self.camera.started.connect(lambda: self._update_status())
         self.camera.stopped.connect(lambda: self._update_status())
+        self.singer.mouth.connect(c.set_mouth)
+        self.singer.started.connect(lambda: c.set_singing(True))
+        self.singer.finished.connect(lambda: (c.set_singing(False), self.bubble.say("", 0.1)))
+        self.singer.line.connect(lambda t: (self.bubble.follow(c.head_anchor()), self.bubble.say(t, 9)))
+        c.sick.connect(self._on_sick)
         self.music.beat.connect(lambda s: c.set_music(self.music.playing, s) if self.music.playing else None)
         self.music.playing_changed.connect(self._on_music)
         self.music.error.connect(lambda m: log.warning(m))
@@ -173,6 +183,8 @@ class WaifuApp(QObject):
         self.bubble.follow(self.character.head_anchor())
         self.bubble.say(text, self.cfg.bubble_seconds)
         if speak:
+            if self.singer.singing:
+                self.singer.stop()
             self.speaker.speak(text)
 
     def _quip(self, key: str, emotion: str | None = None, chance: float = 1.0) -> None:
@@ -223,6 +235,60 @@ class WaifuApp(QObject):
         self.character.set_emotion("thinking", 30)
         self.brain.ask(text)
 
+    # ----------------------------------------------------------------- singing
+    def sing(self, kind: str = "song") -> None:
+        self.speaker.stop()
+        self._next_song = time.monotonic() + max(1.0, self.cfg.sing_minutes) * 60 * random.uniform(0.7, 1.4)
+        self.bubble.follow(self.character.head_anchor())
+        self.bubble.say(random.choice(HUMS), 3)
+        self.singer.sing(kind, self.cfg.user_name)
+        if hasattr(self, "play") and random.random() < 0.5:
+            self.play.party_t = 8.0                       # the pets bop along
+
+    def _maybe_sing(self) -> None:
+        c = self.character
+        if not self.cfg.sing_randomly or self.singer.singing or time.monotonic() < self._next_song:
+            return
+        if (self.emotion.state not in (AWAKE, HAPPY) or self.chat.isVisible() or self.speaker.speaking
+                or self.brain.busy or self.mic.recording or self.music.playing or c.state not in ("idle", "sit", "walk")
+                or c.ctx.angry > 0.3):
+            self._next_song = time.monotonic() + 45
+            return
+        self.sing(random.choice(["hum", "song", "song"]))
+
+    def _on_sick(self, what: str) -> None:
+        self._last_quip = 0.0
+        if what == "splash":
+            self.play.add_mess(self.character._splash_x)
+            return
+        if what == "queasy":
+            self._quip("queasy", "struggling")
+        elif what == "puke":
+            self.emotion._adjust(-6, -1)
+            self.memory.event("sick", "They shook me so hard I threw up.")
+            self._quip("puke", "hurt")
+        else:
+            QTimer.singleShot(300, lambda: (setattr(self, "_last_quip", 0.0), self._quip("puke_after", "pout")))
+            QTimer.singleShot(2200, self.play.clean_up)          # she looks at the mess... and cleans it up
+
+    def set_voice(self, key: str) -> None:
+        _label, voice, rate, pitch = VOICE_PRESETS[key]
+        self.cfg.voice_preset, self.cfg.tts_engine = key, "edge"
+        self.cfg.tts_voice, self.cfg.tts_rate, self.cfg.tts_pitch = voice, rate, pitch
+        self.cfg.save()
+        self.speaker.stop()
+        was = self.cfg.tts_enabled
+        self.cfg.tts_enabled = True                       # let her say something so you can hear it
+        self.say(f"Hi~! Is this voice cute? I'm {self.cfg.name}!", "happy")
+        self.cfg.tts_enabled = was
+
+    def set_privacy(self, on: bool) -> None:
+        self.cfg.privacy_mode = on
+        self.cfg.save()
+        self._apply_senses()
+        self._last_quip = 0.0
+        self.say(line("privacy_on" if on else "privacy_off"), "shy" if on else "happy", speak=False)
+
     def do_command(self, name: str, quiet: bool = False) -> bool:
         """Do a pose / action you asked for. Returns True if it was handled."""
         c = self.character
@@ -239,6 +305,14 @@ class WaifuApp(QObject):
             c.face_me()
         elif name == "sleep":
             QTimer.singleShot(1500, self.emotion.sleep)
+        elif name in ("sing", "hum"):
+            self.sing("song" if name == "sing" else "hum")
+            return True
+        elif name in ("plant", "plant_trees"):
+            ok = self.play.plant_trees(3) if name == "plant_trees" else self.play.start_activity("plant", species="flower")
+            if not ok:
+                self.say(line("pose_cant"), "surprised")
+            return True
         else:
             if c.user_pose:
                 c.stand_up()
@@ -315,6 +389,17 @@ class WaifuApp(QObject):
             self._last_quip = 0.0
             self.say(line(key), "angry")
             return
+        if what in ("plant_destroyed", "plant_removed"):
+            self.emotion.angered(f"{kind}" if kind else "flower")
+            self._last_quip = 0.0
+            self.say(line(what), "angry")
+            return
+        if what in ("plant_start", "tree_start", "plant_done", "water", "plant_bloom", "plant_poked", "plant_loved"):
+            if what in ("plant_bloom", "plant_loved"):
+                self.emotion._adjust(2.0, 0.4)
+            self._last_quip = 0.0 if what in ("plant_bloom", "plant_start") else self._last_quip
+            self._quip(what, "excited" if what == "plant_bloom" else "happy", chance=0.8)
+            return
         if what == "bonk":
             self._last_quip = 0.0
             self._quip("bonk", "angry")
@@ -327,6 +412,10 @@ class WaifuApp(QObject):
             self.emotion._adjust(3, 1.0)
             self._last_quip = 0.0
             self._quip("gift_teddy" if kind == "teddy" else "gift_pet" if kind in PETS else "gift_ball", "happy")
+            return
+        if what in ("clean_eww", "clean_spray", "clean_mop", "clean_done", "mess_poked"):
+            self._last_quip = 0.0
+            self._quip(what, {"clean_eww": "sad", "clean_done": "happy"}.get(what, "neutral"))
             return
         if what in ("her_cuddles", "throw", "treat", "pet_ate", "party", "read", "tea", "exercise", "yarn_play"):
             self.emotion._adjust(1.0, 0.1)
@@ -430,7 +519,7 @@ class WaifuApp(QObject):
             self.say("Hm? I didn't hear anything.", "thinking")
 
     def _start_wake_listening(self) -> None:
-        if self.cfg.wake_by_voice and self.cfg.effective_api_key() and not self.mic.recording:
+        if self.cfg.can("mic") and self.cfg.can("cloud") and self.cfg.effective_api_key() and not self.mic.recording:
             self._wake_listening = True
             self._listen_for_wake()
 
@@ -458,6 +547,10 @@ class WaifuApp(QObject):
 
     # ----------------------------------------------------------------- vision: screen + webcam
     def look_at_screen(self, prompt: str, auto: bool = False) -> None:
+        if not self.cfg.can("screen"):
+            if not auto:
+                self.say(line("privacy_blocked"), "shy")
+            return
         title = self.fg.title
         if vision.is_blocked(title, self.cfg.vision_blocklist):
             if not auto:
@@ -473,6 +566,9 @@ class WaifuApp(QObject):
                   self.on_error if not auto else (lambda m: log.warning("capture failed: %s", m)))
 
     def look_at_me(self, prompt: str) -> None:
+        if not self.cfg.can("webcam") and self.cfg.privacy_mode:
+            self.say(line("privacy_blocked"), "shy")
+            return
         if not self.camera.running:
             self.say("Turn on my webcam eyes first! Right-click me, then 'Let her see me'.", "thinking")
             return
@@ -530,7 +626,7 @@ class WaifuApp(QObject):
     def _comment_on_music(self, changed: bool = False) -> None:
         if not self.music.playing or self.emotion.state in (SLEEPING, HURT):
             return
-        title = now_playing() or ""
+        title = (now_playing() or "") if self.cfg.can("titles") else ""
         now = time.monotonic()
         if title and title == self._last_song:
             return
@@ -540,7 +636,7 @@ class WaifuApp(QObject):
         self.memory.event("music", f"We listened to {title or 'some music'} together.")
         user = self.cfg.user_name or "they"
         if self.cfg.effective_api_key() and not self.brain.busy:
-            clip = self.music.clip_wav(8) if self.cfg.music_send_audio else None
+            clip = self.music.clip_wav(8) if self.cfg.can("music_audio") and self.cfg.can("cloud") else None
             what = f"'{title}'" if title else "some music"
             hear = " A short clip of it is attached so you can hear it." if clip else ""
             bpm = f" It's around {self.music.bpm:.0f} BPM." if self.music.bpm else ""
@@ -566,10 +662,11 @@ class WaifuApp(QObject):
                 self._quip("fall_asleep", "sleepy")
                 QTimer.singleShot(2000, self.emotion.sleep)
         if self._life_n % 15 == 0 and self.music.playing:
-            if (now_playing() or "") != self._last_song:
+            if self.cfg.can("titles") and (now_playing() or "") != self._last_song:
                 self._comment_on_music(changed=True)
         if self._life_n % 30 == 0:
             self._maybe_initiate(idle)
+        self._maybe_sing()
         if self._life_n % 300 == 0 and idle < 120:      # learn when you're usually at the PC
             self.memory.bump(f"active_h{datetime.now().hour}")
         ignored = time.monotonic() - max(self.character.last_interaction, self.last_exchange)
@@ -594,23 +691,31 @@ class WaifuApp(QObject):
 
     # ----------------------------------------------------------------- senses on/off
     def _apply_senses(self) -> None:
-        if self.cfg.webcam_enabled and not self.camera.running:
+        can = self.cfg.can
+        self.memory.private = not can("memory")
+        self.fg.enabled = can("titles")
+        if not self.fg.enabled:
+            self.fg.title = ""
+        if can("webcam") and not self.camera.running:
             self.camera.index = self.cfg.webcam_index
             self.camera.start()
-        elif not self.cfg.webcam_enabled and self.camera.running:
+        elif not can("webcam") and self.camera.running:
             self.camera.stop()
-        if self.cfg.music_enabled and not self.music.running:
+        if can("music") and not self.music.running:
             self.music.start()
-        elif not self.cfg.music_enabled and self.music.running:
+        elif not can("music") and self.music.running:
             self.music.stop()
+        if not can("mic") and self._wake_listening:
+            self._stop_wake_listening()
         self.vision_timer.stop()
-        if self.cfg.vision_auto:
+        if self.cfg.vision_auto and can("screen"):
             self.vision_timer.start(int(max(1.0, self.cfg.vision_interval_min) * 60_000))
         self._update_status()
 
     def _status(self) -> str:
-        icons = {SLEEPING: "💤", HURT: "😢", HAPPY: "✨", LISTENING: "🎵"}.get(self.emotion.state, "") or \
-            {"shy": "☺", "flustered": "😳", "playful": "😜", "sleepy": "🥱"}.get(self.emotion.mood_label(), "")
+        lock = "🔒 " if self.cfg.privacy_mode or self.cfg.local_only else ""
+        icons = lock + ({SLEEPING: "💤", HURT: "😢", HAPPY: "✨", LISTENING: "🎵"}.get(self.emotion.state, "") or \
+            {"shy": "☺", "flustered": "😳", "playful": "😜", "sleepy": "🥱"}.get(self.emotion.mood_label(), ""))
         cam = " 📷" if self.camera.running else ""
         return f"{icons} ♥{self.emotion.affection:.0f}{cam}".strip()
 
@@ -715,12 +820,18 @@ class WaifuApp(QObject):
                             ("treat", "🍪 Give her pet a treat", has_pet), ("throw", "⚾ Play fetch", "ball" in out),
                             ("yarn", "🧶 Play with the kitten", "yarn" in out and "cat" in out),
                             ("party", "🎉 Dance party with the pets", has_pet), ("read", "📖 Read a book", True),
-                            ("tea", "🍵 Have some tea", True), ("exercise", "🤸 Exercise", True)):
-            act = do.addAction(lbl, lambda n=nm: self.play.start_activity(n) or
-                               self.say("Hang on, I can't right now~", "surprised", speak=False))
+                            ("tea", "🍵 Have some tea", True), ("exercise", "🤸 Exercise", True),
+                            ("plant", "🌱 Plant a flower", len(self.play.plants()) < 8),
+                            ("trees", "🌳 Plant a row of trees (one by one)", len(self.play.plants()) < 8),
+                            ("water", "💧 Water the flowers", bool(self.play.plants()))):
+            act = do.addAction(lbl, lambda n=nm: (self.play.plant_trees(3) if n == "trees" else
+                                                  self.play.start_activity(n, species="flower" if n == "plant" else ""))
+                               or self.say("Hang on, I can't right now~", "surprised", speak=False))
             act.setEnabled(ok)
         if "teddy" in out:
             pt.addAction("🧸 Give her the teddy", lambda: self.play._hug(self.play.get("teddy")))
+        if self.play.plants():
+            pt.addAction(f"🥀 Remove her flowers ({len(self.play.plants())})… she'll be upset", self.play.remove_plants)
         if out:
             pt.addAction("Put them all away", self.play.clear)
         chars = m.addMenu("👗 Character")
@@ -730,6 +841,40 @@ class WaifuApp(QObject):
             act = QAction(label, chars, checkable=True, checked=active)
             act.triggered.connect(lambda _=False, s=style, p=path: self.choose_character(s, p))
             chars.addAction(act)
+        sing = m.addMenu("🎵 Sing & voice")
+        sing.addAction("🎤 Sing a song", lambda: self.sing("song"))
+        sing.addAction("🎶 Hum a tune", lambda: self.sing("hum"))
+        if self.singer.singing:
+            sing.addAction("⏹ Stop singing", self.singer.stop)
+        act = QAction("Sing and hum on her own", sing, checkable=True, checked=self.cfg.sing_randomly)
+        act.toggled.connect(lambda on: self._toggle("sing_randomly", on))
+        sing.addAction(act)
+        sing.addSeparator()
+        for key, (lbl, *_rest) in VOICE_PRESETS.items():
+            a = QAction("🎀 " + lbl, sing, checkable=True, checked=self.cfg.voice_preset == key)
+            a.triggered.connect(lambda _=False, k=key: self.set_voice(k))
+            sing.addAction(a)
+        priv = m.addMenu("🔒 Privacy")
+        lock = QAction("🔒 Privacy mode: she won't look at or listen to anything", priv, checkable=True,
+                       checked=self.cfg.privacy_mode)
+        lock.toggled.connect(self.set_privacy)
+        priv.addAction(lock)
+        priv.addSeparator()
+        for label, attr in (("Look at my screen (screenshots)", "allow_screen"),
+                            ("Read window titles (apps, song names)", "allow_window_titles"),
+                            ("Glance at my screen by herself", "vision_auto"),
+                            ("Webcam", "webcam_enabled"), ("Listen for her name while asleep (mic)", "wake_by_voice"),
+                            ("Listen to the music my PC plays", "music_enabled"),
+                            ("Send music clips to Gemini", "music_send_audio"),
+                            ("Remember our chats and learn about me", "remember_chats"),
+                            ("Local AI only: send nothing to the cloud", "local_only")):
+            a = QAction(label, priv, checkable=True, checked=getattr(self.cfg, attr))
+            a.setEnabled(not (self.cfg.privacy_mode and attr not in ("remember_chats", "local_only")))
+            a.toggled.connect(lambda on, at=attr: self._toggle(at, on))
+            priv.addAction(a)
+        priv.addSeparator()
+        priv.addAction("🧹 Forget everything about me", lambda: (self.brain.clear_memory(),
+                       self.say("...Okay. Everything's forgotten. Nice to meet you~?", "shy", speak=False)))
         m.addSeparator()
         for label, attr in (("Voice replies", "tts_enabled"), ("Let her see me (webcam)", "webcam_enabled"),
                             ("Listen to music with me", "music_enabled"),

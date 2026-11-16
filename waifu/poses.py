@@ -12,7 +12,8 @@ import re
 HELD = ("sit", "lie", "kneel", "squat", "bow", "hands_up", "salute", "peace", "think", "arms_crossed",
         "hands_on_hips", "t_pose", "dance", "hug_self", "shy")
 # one-shot actions (CharacterWindow.do_cute and friends)
-ONESHOT = ("stand", "jump", "hop_hop", "twirl", "nya", "heart", "kiss", "wave", "turn_around", "face_me", "sleep")
+ONESHOT = ("stand", "jump", "hop_hop", "twirl", "nya", "heart", "kiss", "wave", "turn_around", "face_me", "sleep",
+           "sing", "hum", "plant", "plant_trees")
 ALL = HELD + ONESHOT
 
 PATTERNS: list[tuple[str, str]] = [
@@ -32,6 +33,10 @@ PATTERNS: list[tuple[str, str]] = [
     ("dance", r"\b(dance|dancing|boogie)\b"),
     ("hug_self", r"\b(hug yourself|self hug|you cold)\b"),
     ("shy", r"\b(be shy|shy pose|cute pose)\b"),
+    ("plant_trees", r"\b(plant (some |a |the )?trees?|grow (some )?trees?)\b"),
+    ("plant", r"\b(plant (a |some )?(flowers?|seeds?)|garden(ing)?)\b"),
+    ("hum", r"\b(hum|humming)\b"),
+    ("sing", r"\b(sing|singing)\b"),
     ("jump", r"\b(jump|leap)\b"),
     ("hop_hop", r"\b(hop|bunny hop)\b"),
     ("twirl", r"\b(twirl|spin( around)?)\b"),

@@ -179,6 +179,9 @@ class MeshCharacter:
     def foot_offset(self) -> int:
         return round(BOT_M * self.m.height * self.ppm)
 
+    def feet_y(self) -> float:
+        return self.project(self._world([0.0, 0.0, 0.0]))[1]
+
     def project(self, p) -> tuple[float, float]:
         c = self._vp @ np.append(np.asarray(p, float), 1.0)
         return (c[0] / c[3] + 1) / 2 * self.W, (1 - c[1] / c[3]) / 2 * self.H

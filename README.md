@@ -147,6 +147,39 @@ a **teddy bear** and a **yarn ball**. Each one lives on your desktop with real p
 - You can ask for any of these: Right-click → 🐾 Pets & toys → **✨ Ask her to…**
 - **Throw something hard at her** and it's a bonk: she gets angry. **Hurt a pet** (hold it squeezed, or slam it down) and she gets angry at you.
 
+## Garden: flowers and trees
+
+She plants things on your taskbar and looks after them: **sunflowers, tulips, daisies, sakura, bluebells** in little pots,
+and **oak, pine, apple and cherry-blossom trees** in wooden planters. She kneels down to plant a seed, waters it with a
+watering can, and it grows over about half an hour: seed → sprout → bud → bloom (trees: sapling → young tree → full tree
+with apples or blossoms). Thirsty plants droop and show a water drop until she waters them. The garden is saved and
+survives restarts.
+
+- Ask her: *"plant some trees"* (a row of three, **one by one**) or *"plant a flower"*, or Right-click → 🐾 Pets & toys → ✨ Ask her to….
+- Click a plant to make it wiggle, stroke or double-click it for hearts.
+- **Pull one up or hold it until it's squashed** and it falls over, shedding petals, and she gets **angry**.
+  Removing her flowers from the menu makes her angry too.
+
+## Singing, humming and an anime voice
+
+She **hums and sings to herself** now and then (Right-click → 🎵 Sing & voice, or say *"sing me a song"* / *"hum"*).
+The humming is a small human-like voice synthesizer (vocal-fold pulses, natural pitch wobble and breath, closed-mouth
+"mmm" resonances) singing a new pentatonic tune every time; songs mix hummed phrases with short original lyrics in her
+voice. Pick an **anime-girl voice preset** in the same menu (cute, genki, little sister, soft Japanese, Japanese accent).
+Listen to a sample: [docs/hum_sample.wav](docs/hum_sample.wav).
+
+## Privacy
+
+Right-click → **🔒 Privacy**. **Privacy mode** is a master lock: she won't take screenshots, read window titles or
+song names, use the webcam or microphone, or listen to your PC's audio. Separate switches control each sense, whether
+she **remembers your chats and learns about you**, and **Local AI only** (nothing is sent to the cloud, including her
+voice, which then uses the offline Windows voice). *Forget everything about me* wipes her memory.
+
+## Don't shake her!
+
+Shake her hard while holding her and she gets dizzy (swirly eyes, green face)... put her down and she throws up on
+the taskbar. She looks at the puddle ("eww..."), then cleans it with a spray bottle and a mop until it's gone.
+
 ## Cloth physics
 
 Loose clothing (skirts, tunic flaps, hems) swings when she moves, is dragged, jumps or falls, ripples in the breeze and gusts,

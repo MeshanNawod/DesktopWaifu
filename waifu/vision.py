@@ -28,6 +28,7 @@ class ForegroundTracker(QObject):
     def __init__(self):
         super().__init__()
         self.title = ""
+        self.enabled = True          # privacy: when off, window titles are never read
         self._pid = os.getpid()
         if _user32:
             self._timer = QTimer(self)
@@ -35,6 +36,9 @@ class ForegroundTracker(QObject):
             self._timer.start(1000)
 
     def _poll(self) -> None:
+        if not self.enabled:
+            self.title = ""
+            return
         hwnd = _user32.GetForegroundWindow()
         if not hwnd:
             return

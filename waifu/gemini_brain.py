@@ -112,7 +112,7 @@ class Brain(QObject):
         local:  the downloaded Ollama model only
         auto:   Gemini first; if it's overloaded / offline / out of quota, the local model answers
         """
-        engine = self.cfg.ai_engine
+        engine = "local" if self.cfg.local_only else self.cfg.ai_engine     # privacy: nothing to the cloud
         if engine == "local" and local is not None:
             return _Text(self._local_chat(local))
         try:
@@ -271,7 +271,7 @@ Output rules (always follow):
             if not event and not auto:
                 self.memory.add_message("user", remembered)
             self.memory.add_message("model", raw)
-            if not event and not auto:
+            if not event and not auto and not self.memory.private:
                 self._since_extract += 1
                 if self._since_extract >= EXTRACT_EVERY:
                     self._since_extract = 0

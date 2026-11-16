@@ -93,6 +93,30 @@ class Config:
     force_hit_mask: bool = False           # fallback if click-through misbehaves
     companions: list[str] = field(default_factory=list)   # pets & toys out on the desktop
 
+    plants: list = field(default_factory=list)            # her garden on the taskbar
+    garden_minutes: float = 30.0           # how long a flower takes to bloom
+
+    # Privacy
+    privacy_mode: bool = False             # master lock: no screen, window titles, webcam, mic or system audio
+    allow_screen: bool = True              # screenshots ("look at my screen" + automatic glances)
+    allow_window_titles: bool = True       # reading window titles (what you're using, song names)
+    remember_chats: bool = True            # save chats, learn facts and habits about you
+    local_only: bool = False               # never send anything to the cloud (needs a downloaded local model)
+
+    # Singing
+    sing_randomly: bool = True             # she hums / sings to herself now and then
+    sing_minutes: float = 6.0              # about how often
+    voice_preset: str = ""                 # anime_cute | anime_jp | anime_nanami | anime_genki | soft
+
+    def can(self, what: str) -> bool:
+        """May she use this source of your data? what: screen | titles | webcam | mic | music | music_audio |
+        memory | cloud. The privacy-mode master lock turns off every sense that looks at or listens to your PC."""
+        if self.privacy_mode and what in ("screen", "titles", "webcam", "mic", "music", "music_audio"):
+            return False
+        return {"screen": self.allow_screen, "titles": self.allow_window_titles, "webcam": self.webcam_enabled,
+                "mic": self.wake_by_voice, "music": self.music_enabled, "music_audio": self.music_send_audio,
+                "memory": self.remember_chats, "cloud": not self.local_only}.get(what, True)
+
     def effective_api_key(self) -> str:
         return (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
                 or self.api_key).strip()
