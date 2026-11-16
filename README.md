@@ -358,6 +358,49 @@ tools/
 
 ## Credits
 
-- **Seed-san:** VRM Consortium sample model (VRM Public License 1.0).
-- **Face detection:** OpenCV Haar cascade (Apache 2.0).
-- **Futuristic Girl** and the scarf-girl picture are third-party assets provided by the repo owner.
+DesktopWaifu stands on the work of many people. Thank you all!
+
+### 3D models and art
+
+| Asset | Author | Source | License |
+|---|---|---|---|
+| **Futuristic Girl** (`assets/models/FuturisticGirl/`: FBX model and textures) | **FERUL** | [CGTrader item 7216568](https://www.cgtrader.com/items/7216568) | Used under the license of the CGTrader listing. All rights belong to FERUL. |
+| **Seed-san** (`assets/models/Seed-san.vrm`, also the base of *Seed-chan*) | **VirtualCast, Inc.** | [VRM Consortium sample models](https://vrm.dev/en/) | [VRM Public License 1.0](https://vrm.dev/licenses/1.0/) (credit required; modification and redistribution allowed) |
+| **Seed-chan** (`assets/models/Seed-chan.variant.json`) | recolour and cute variant of Seed-san made for this project | this repo | follows Seed-san's VRM Public License 1.0 |
+| **Scarf girl picture** (`assets/characters/scarf_girl/`) | third-party picture provided by the repo owner | | used with permission |
+| **Face detector** (`assets/models/haarcascade_frontalface_default.xml`) | Rainer Lienhart, Intel Corporation | [OpenCV](https://github.com/opencv/opencv) | Intel License Agreement for OpenCV (BSD-style) |
+| **App icon, pets, toys, plants, website art** | drawn for this project | this repo | same license as the project |
+
+### Services and voices
+
+- **Google Gemini** (`google-genai`), the cloud AI that powers her conversations.
+- **Ollama** and the open models it runs (e.g. Google **Gemma 3**), for the offline AI. Each model has its own license.
+- **Microsoft Edge neural voices** (Ana, Nanami, Maisie, Ava) via [edge-tts](https://github.com/rany2/edge-tts), and the Windows SAPI voices offline.
+- Website font: **M PLUS Rounded 1c** by the M+ Fonts Project (SIL Open Font License), via Google Fonts.
+
+### Open-source libraries
+
+| Library | License | | Library | License |
+|---|---|---|---|---|
+| [PySide6 / Qt](https://www.qt.io/qt-for-python) | LGPL-3.0 | | [NumPy](https://numpy.org) | BSD-3-Clause |
+| [PyOpenGL](https://pyopengl.sourceforge.net) | BSD | | [OpenCV (opencv-python-headless)](https://github.com/opencv/opencv-python) | Apache-2.0 |
+| [google-genai](https://github.com/googleapis/python-genai) | Apache-2.0 | | [edge-tts](https://github.com/rany2/edge-tts) | LGPL-3.0 |
+| [SoundCard](https://github.com/bastibe/SoundCard) | BSD-3-Clause | | [sounddevice](https://github.com/spatialaudio/python-sounddevice) | MIT |
+| [mss](https://github.com/BoboTiG/python-mss) | MIT | | [Pillow](https://python-pillow.org) | MIT-CMU |
+| [pyttsx3](https://github.com/nateshmbhat/pyttsx3) | MPL-2.0 | | [comtypes](https://github.com/enthought/comtypes) | MIT |
+| [pywin32](https://github.com/mhammond/pywin32) | PSF | | [aiohttp](https://github.com/aio-libs/aiohttp) | Apache-2.0 |
+| [certifi](https://github.com/certifi/python-certifi) | MPL-2.0 | | [cffi](https://cffi.readthedocs.io) | MIT-0 |
+
+Installer built with [PyInstaller](https://pyinstaller.org) (GPL-2.0 with the bootloader exception) and
+[Inno Setup](https://jrsoftware.org/isinfo.php) by Jordan Russell and Martijn Laan.
+
+### Ideas and research
+
+- Music key / mood detection uses the **Krumhansl–Kessler** key profiles (C. Krumhansl, *Cognitive Foundations of
+  Musical Pitch*, 1990).
+- Humming uses **TD-PSOLA** pitch shifting (Moulines & Charpentier, 1990) and a **Rosenberg** glottal pulse model
+  (A. Rosenberg, 1971).
+- Hair and cloth springs follow the **VRM spring bone** design by the VRM Consortium.
+
+If you made something used here and the credit is missing or wrong, please
+[open an issue](https://github.com/MeshanNawod/DesktopWaifu/issues) and it will be fixed right away.
