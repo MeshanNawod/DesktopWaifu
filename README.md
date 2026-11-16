@@ -13,7 +13,9 @@ listens to music with you and talks out loud. Her brain is Google Gemini, with a
 ---
 
 ## Contents
-- [Quick start](#quick-start)
+
+- [Download](#download)
+- [Quick start (from source)](#quick-start-from-source)
 - [Characters](#characters)
 - [Touch and gestures](#touch-and-gestures)
 - [She learns about you and seeks your attention](#she-learns-about-you-and-seeks-your-attention)
@@ -30,7 +32,14 @@ listens to music with you and talks out loud. Her brain is Google Gemini, with a
 
 ---
 
-## Quick start
+## Download
+
+**[⬇ DesktopWaifu-Setup.exe](https://github.com/MeshanNawod/DesktopWaifu/releases/latest/download/DesktopWaifu-Setup.exe)**
+(Windows 10/11, no admin rights needed) · Website: **https://meshannawod.github.io/DesktopWaifu/**
+
+The installer isn't code-signed, so Windows SmartScreen may say "Windows protected your PC": click **More info → Run anyway**.
+
+## Quick start (from source)
 
 1. Install **Python 3.12 or 3.13** from python.org. Tick "Add to PATH" and keep the `py` launcher.
 2. Double-click **`setup.bat`**. It creates `.venv` and installs everything in `requirements.txt`.

@@ -20,3 +20,4 @@ Thumbs.db
 
 # your own hum recording / samples (not ours to redistribute)
 docs/hum_sample.wav
+build_log.txt
