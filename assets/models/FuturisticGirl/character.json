@@ -2,5 +2,10 @@
   "name": "Futuristic Girl",
   "front": "+x",
   "tpose": true,
-  "arm_down_deg": 76
+  "arm_down_deg": 76,
+  "cloth": {
+    "softness": 0.9,
+    "flutter": 0.005,
+    "leg_radius": 0.07
+  }
 }

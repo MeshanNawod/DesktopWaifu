@@ -20,6 +20,7 @@ from .vrm.math3d import (IDENTITY_Q, normalize, ortho, q_axis, q_euler, q_from_v
                          q_mul, q_rotate, q_slerp, q_to_m3, rot_m4, translate)
 from .vrm.model import R180, VrmModel
 from .vrm.renderer import VrmRenderer
+from .cloth import ClothSim
 from .vrm.springs import SpringSystem
 
 log = logging.getLogger(__name__)
@@ -112,6 +113,124 @@ def gesture_pose(name: str, gt: float) -> dict[str, np.ndarray]:
     return {}
 
 
+def hold_pose(name: str, t: float) -> dict[str, np.ndarray]:
+    """Poses held for as long as she's hugging something / angry."""
+    if name == "hug":          # hugging a teddy / pet against her chest, swaying happily
+        sway = math.sin(t * 2.2) * 4
+        P = _arm_pair(-38, -25, -62, -105, -10)
+        P.update({"spine": _rz(sway * 0.6), "head": q_mul(_rx(10), _rz(sway + 6))})
+        return P
+    if name == "cross":        # arms crossed, chin up: "Hmph!"
+        P = _arm_pair(-30, -22, -70, -128, -12)
+        P["leftLowerArm"] = q_mul(P["leftLowerArm"], _rx(8))
+        P["rightLowerArm"] = q_mul(P["rightLowerArm"], _rx(-8))
+        P.update({"head": q_mul(_rx(-9), _rz(math.sin(t * 0.9) * 3)), "chest": _rx(-3)})
+        return P
+    return {}
+
+
+def body_pose(name: str, t: float, add, P: dict) -> tuple[float, str | None]:
+    """Held poses you can ask for. Fills P; returns (how far to drop the hips 0..1 of hip height, leg mode)."""
+    def arms(lu, ll, ru=None, rl=None):
+        P["leftUpperArm"], P["leftLowerArm"] = lu, ll
+        if ru is not None:
+            P["rightUpperArm"], P["rightLowerArm"] = ru, rl
+    if name == "kneel":           # seiza: sitting on her heels, hands on her lap
+        for side, sgn in (("left", 1), ("right", -1)):
+            P[f"{side}UpperLeg"] = q_mul(_rx(-86), _rz(sgn * -3))
+            P[f"{side}LowerLeg"] = _rx(158)
+            P[f"{side}Foot"] = _rx(-35)
+        P.update(_arm_pair(-32, -12, -74, -62, -12))
+        add("spine", _rx(4))
+        return 0.74, "kneel"
+    if name == "squat":
+        for side, sgn in (("left", 1), ("right", -1)):
+            P[f"{side}UpperLeg"] = q_mul(_rx(-108), _rz(sgn * -16))
+            P[f"{side}LowerLeg"] = _rx(132)
+            P[f"{side}Foot"] = _rx(-22)
+        P.update(_arm_pair(-52, -18, -64, -25, 0))
+        add("spine", _rx(16))
+        add("head", _rx(-10))
+        return 0.5, "squat"
+    if name == "bow":             # polite bow, hands together in front
+        P.update(gesture_pose("shy_hands", t))
+        P["head"] = _rx(10)
+        add("spine", _rx(24))
+        add("chest", _rx(14))
+        add("neck", _rx(8))
+        return 0.0, None
+    if name == "hands_up":        # banzai!
+        b = abs(math.sin(t * 4)) * 6
+        P.update({"leftUpperArm": _rz(82 - b), "rightUpperArm": _rz(-82 + b),
+                  "leftLowerArm": _rz(8), "rightLowerArm": _rz(-8)})
+        add("head", _rx(-8))
+        return 0.0, None
+    if name == "salute":
+        P.update({"rightUpperArm": q_mul(_rx(-45), _rz(-20)), "rightLowerArm": q_mul(_ry(78), _rz(-98)),
+                  "rightHand": _rx(-10)})
+        add("head", _rx(-4))
+        add("chest", _rx(-4))
+        return 0.0, None
+    if name == "peace":           # V-sign next to her face, head tilted
+        P.update({"rightUpperArm": q_mul(_rx(-52), _rz(-28)), "rightLowerArm": q_mul(_ry(62), _rz(-102)),
+                  "rightHand": _rz(math.sin(t * 3) * 6)})
+        add("head", _rz(-9))
+        return 0.0, None
+    if name == "think":           # hand on her chin, other arm across her waist
+        P.update({"rightUpperArm": q_mul(q_mul(_rx(-28), _ry(28)), _rz(70)), "rightLowerArm": q_mul(_ry(122), _rz(-12)),
+                  "leftUpperArm": q_mul(_rx(-22), _rz(-76)), "leftLowerArm": _ry(-82)})
+        add("head", q_mul(_rz(8), _rx(-6)))
+        return 0.0, None
+    if name == "arms_crossed":
+        P.update(hold_pose("cross", t))
+        return 0.0, None
+    if name == "hug_self":
+        P.update(_arm_pair(-42, -30, -66, -142, -22))
+        add("head", _rx(8))
+        add("spine", _rx(6))
+        return 0.0, None
+    if name == "hands_on_hips":   # confident hero pose
+        P.update({"leftUpperArm": q_mul(_rx(12), _rz(-48)), "rightUpperArm": q_mul(_rx(12), _rz(48)),
+                  "leftLowerArm": q_mul(_rz(-78), _ry(18)), "rightLowerArm": q_mul(_rz(78), _ry(-18)),
+                  "leftHand": _rz(-20), "rightHand": _rz(20)})
+        add("chest", _rx(-6))
+        add("head", _rx(-6))
+        for side, sgn in (("left", 1), ("right", -1)):
+            add(f"{side}UpperLeg", _rz(sgn * -5))
+        return 0.0, None
+    if name == "t_pose":
+        for b in ("leftUpperArm", "rightUpperArm", "leftLowerArm", "rightLowerArm", "leftHand", "rightHand"):
+            P[b] = IDENTITY_Q
+        return 0.0, None
+    if name == "shy":
+        P.update(gesture_pose("shy_hands", t))
+        for side, sgn in (("left", 1), ("right", -1)):
+            add(f"{side}UpperLeg", _rz(sgn * 5))
+            add(f"{side}LowerLeg", _rx(6))
+        return 0.0, None
+    if name == "dance":
+        ph = t * math.tau * 1.1
+        s = math.sin(ph)
+        P.update({"leftUpperArm": q_mul(_rx(-20), _rz(30 + 40 * max(0.0, s))),
+                  "rightUpperArm": q_mul(_rx(-20), _rz(-30 - 40 * max(0.0, -s))),
+                  "leftLowerArm": _rz(30 + 20 * s), "rightLowerArm": _rz(-30 + 20 * s)})
+        add("hips", _rz(s * 8))
+        add("spine", q_mul(_rz(-s * 6), _ry(math.sin(ph * 0.5) * 12)))
+        add("head", _rz(s * 7))
+        for side, sgn in (("left", 1), ("right", -1)):
+            bend = max(0.0, s * sgn) * 30
+            add(f"{side}UpperLeg", _rx(-bend * 0.6))
+            add(f"{side}LowerLeg", _rx(bend))
+        return 0.03 * abs(math.sin(ph * 2)), None
+    if name == "lie":             # lying on her back, one knee up, looking at you
+        add("leftUpperLeg", _rx(-32))
+        add("leftLowerLeg", _rx(58))
+        P.update(_arm_pair(10, 0, -60, -20, 0))
+        add("head", _rx(-28))
+        return 0.0, None
+    return 0.0, None
+
+
 def gesture_for(face: str, emotion: str) -> str:
     """Pick an idle gesture that matches her current expression / mood."""
     if face == "blush" or emotion == "shy":
@@ -168,6 +287,12 @@ class VrmCharacter:
         head = m.humanoid.get("head")
         self.springs = SpringSystem(m, m.descendants(head) if head is not None else set())
         self.hair_springs, self.cloth_springs = self._classify_springs()
+        co = m.options.get("cloth", {})
+        self.cloth = ClothSim(m.height, float(co.get("softness", 1.0)), float(co.get("flutter", 0.006))) \
+            if any(mt.cloth for mt in m.materials) else None
+        self._cloth_leg_r = float(co.get("leg_radius", 0.075)) * self.k
+        self._wind = np.zeros(3)
+        self._pitch = 0.0
 
         self.t = 0.0
         self.off = np.zeros(3)                         # model position in world (metres)
@@ -323,6 +448,9 @@ class VrmCharacter:
         self._jelly_v += 3.0 if kind in ("pet", "squeeze", "gentle") else 5.0
         hair = [j for j in self.springs.joints if id(j) in self.hair_springs]
         flick = 0.03 if kind in ("pet", "gentle", "squeeze") else 0.07
+        if self.cloth is not None:
+            strong = 3.0 if zone in ("skirt", "body", "chest", "leg_l", "leg_r") or kind == "rough" else 1.2
+            self.cloth.kick(self._canon((side * 0.25 * strong, 0.05, 0.2 * strong)) / max(self.k, 1e-3))
         self.springs.kick(hair, self._canon((side * flick, flick * 0.6, flick * 0.5)))
         if kind == "squeeze":
             self.timers["blush"] = 3.0
@@ -538,6 +666,16 @@ class VrmCharacter:
             self._enhanced_pose(P, hip, state, ctx, add)
         elif self.gesture and state in (IDLE, REACT, PET, SIT):
             self._blend_gesture(P)
+        if ctx.pose and state in (IDLE, REACT, PET):
+            drop, _legs = body_pose(ctx.pose, t, add, P)
+            if drop:
+                hips = self.m.bone_pos(self.m.rest_world, "hips")
+                hh = (hips[1] - self.m.min_y) if hips is not None else 0.5 * self.m.height
+                hip[1] = -hh * drop
+        elif state not in (DRAG, FALL, SLEEP, KNOCK) and (ctx.holding or ctx.angry > 0.3):
+            P.update(hold_pose("hug" if ctx.holding else "cross", t))
+            if not ctx.holding and state in (IDLE, REACT):
+                hip[1] -= abs(math.sin(t * 5.0)) * 0.006 * self.k if int(t * 0.8) % 3 == 0 else 0.0   # stomp stomp
         if state not in (DRAG, FALL):
             self._manip_pose(P, add)
 
@@ -674,6 +812,20 @@ class VrmCharacter:
         small = zone in ("eye_l", "eye_r", "nose", "mouth", "cheek_l", "cheek_r", "hand_l", "hand_r")
         self._sq_radius = (0.05 if small else 0.085) * self.m.height
         self._sq_target = 1.0
+
+    def _cloth_uniforms(self) -> dict | None:
+        if self.cloth is None or self._W is None:
+            return None
+        m, W = self.m, self._W
+        hip = m.bone_pos(W, "hips")
+        parts = [m.bone_pos(W, b) for b in ("leftUpperLeg", "leftFoot", "rightUpperLeg", "rightFoot")]
+        knee = m.bone_pos(W, "leftLowerLeg")
+        if hip is None or knee is None or any(p is None for p in parts):
+            return None
+        return {"hip_y": hip[1] - 0.02 * self.k, "length": max(0.1, hip[1] - knee[1]),
+                "uLegL0": parts[0], "uLegL1": parts[1], "uLegR0": parts[2], "uLegR1": parts[3],
+                "offset": self.cloth.off, "flutter": self.cloth.flutter, "time": self.t,
+                "leg_radius": self._cloth_leg_r}
 
     def _update_squish(self, dt: float) -> None:
         # squeeze: springy (overshoots into a little bulge when released); jelly: whole-body wobble
@@ -815,6 +967,10 @@ class VrmCharacter:
             self.gesture, self.gesture_t = name, 0.0
 
     def _update_gestures(self, dt: float, state: str, ctx: FrameContext) -> None:
+        if (ctx.holding or ctx.angry > 0.3 or ctx.pose) and self.gesture not in ("nya", "heart", "kiss", "wave_l", "wave_r"):
+            self.gesture = None          # arms are busy hugging / crossed
+            self._next_gesture = max(self._next_gesture, 3.0)
+            return
         if self.gesture:
             self.gesture_t += dt
             if self.gesture_t >= GESTURE_LEN.get(self.gesture, 2.0) or state in (DRAG, FALL, WALK, SLEEP):
@@ -927,6 +1083,8 @@ class VrmCharacter:
             target_yaw = -58.0 if ctx.facing_left else 58.0
         elif ctx.emotion == "hurt":
             target_yaw = -40.0 if self.look[0] >= 0 else 40.0   # turns away from you, sulking
+        elif ctx.angry > 0.3 and state in (IDLE, REACT):
+            target_yaw = (-38.0 if self.look[0] >= 0 else 38.0) + ctx.user_yaw   # "hmph!" turns away
         elif state in (SIT, SLEEP):
             target_yaw = 8.0 + ctx.user_yaw
         else:
@@ -942,9 +1100,12 @@ class VrmCharacter:
         q_root = q_mul(_rz(tilt), _ry(self.yaw))
         self._root_rot = q_root
         pivot = np.array([0.0, self.m.height * 0.82, 0.0])
-        root = (translate(*self.off) @ translate(*pivot) @ rot_m4(_rz(tilt)) @ translate(*-pivot)
-                @ translate(0, hop, 0) @ rot_m4(q_mul(_rz(ctx.knock_dir * 14 * ctx.knock), _rx(-82 * ctx.knock)))
-                @ rot_m4(_ry((self.yaw + ctx.spin) * (1 - ctx.knock))))
+        self._pitch += (ctx.user_pitch - self._pitch) * min(1.0, dt * 10)
+        kn = max(ctx.knock, ctx.lie * 0.92)
+        root = (translate(*self.off) @ rot_m4(_rx(self._pitch * (1 - kn)))
+                @ translate(*pivot) @ rot_m4(_rz(tilt)) @ translate(*-pivot)
+                @ translate(0, hop, 0) @ rot_m4(q_mul(_rz(ctx.knock_dir * 14 * ctx.knock), _rx(-82 * kn)))
+                @ rot_m4(_ry((self.yaw + ctx.spin) * (1 - kn))))
         self._update_squish(dt)
         j = max(-0.6, min(0.6, self._jelly))
         S = np.diag([1 - j * 0.035, 1 + j * 0.06, 1 - j * 0.035, 1.0])
@@ -986,6 +1147,12 @@ class VrmCharacter:
         wind = self._canon((math.sin(self.t * 1.3) * 0.9 + math.sin(self.t * 3.1) * 0.35 + self._gust,
                             0.15 + flutter * 0.3, math.cos(self.t * 0.9) * 0.7 + flutter))
         self._apply_brush()
+        self._wind = wind
+        if self.cloth is not None:
+            acc = np.array([ax, -ay, 0.0]) / self.ppm
+            vel = np.array([vx, -vy, 0.0]) / self.ppm
+            phase = self.t * math.tau * 1.7 if state == WALK else None
+            self.cloth.step(dt, acc, vel, wind, phase)
         for _ in range(n):
             self.springs.update(W, dt / n, wind)
         W2 = m.world_matrices(root)
@@ -1002,7 +1169,7 @@ class VrmCharacter:
             self.gl.resize(round(self.W * dpr), round(self.H * dpr))
             self.gl.ctx.doneCurrent()
         sq = (self._sq_center, self._sq_radius, self._sq * 0.85) if abs(self._sq) > 0.01 else None
-        img = self.gl.render(self._W, self._vp, self._morph_weights(), squeeze=sq)
+        img = self.gl.render(self._W, self._vp, self._morph_weights(), squeeze=sq, cloth=self._cloth_uniforms())
         img.setDevicePixelRatio(self.dpr)
         if self.enhanced and state not in (DRAG, FALL):
             # soft contact shadow under her feet, drawn beneath the model
@@ -1077,8 +1244,8 @@ class VrmCharacter:
             col.setAlphaF(max(0.0, 1 - ph))
             p.setPen(col)
             p.drawText(QPointF(x + 8, y - 10 - ph * 18), "puni♡")
-        if self.timers["steam"] > 0 or ctx.emotion == "flustered":
-            draw_steam(p, top[0], top[1] + 4, t, 0.9)
+        if self.timers["steam"] > 0 or ctx.emotion == "flustered" or ctx.angry > 0.5:
+            draw_steam(p, top[0], top[1] + 4, t, 0.9 + 0.3 * ctx.angry)
         if ctx.struggle > 0.3:   # flailing: sweat drops and little motion marks
             for i, sx in enumerate((1, -1)):
                 ph = (t * 2.2 + i * 0.5) % 1.0
@@ -1109,9 +1276,9 @@ class VrmCharacter:
                 p.setPen(col)
                 p.drawText(QPointF(top[0] + (-30 if i else 26) + math.sin(t * 2 + i) * 6, top[1] + 20 - ph * 40),
                            "♪" if i else "♫")
-        if ctx.emotion == "angry":
+        if ctx.emotion == "angry" or ctx.angry > 0.3:
             x, y = self.project(hc + self._canon((-0.07, 0.08, 0)))
-            s = 5.0
+            s = 5.0 + ctx.angry * (2.5 + math.sin(t * 9) * 1.2)     # throbbing anger vein
             p.setPen(_pen(QColor("#ff3b3b"), 2.2))
             for a, b in (((-1, -0.3), (-0.3, -0.3)), ((-0.3, -1), (-0.3, -0.3)),
                          ((1, 0.3), (0.3, 0.3)), ((0.3, 1), (0.3, 0.3))):

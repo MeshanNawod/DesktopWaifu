@@ -19,5 +19,14 @@
     "drag": 0.28,
     "gravity": 0.35,
     "wind": 0.6
+  },
+  "cloth": {
+    "materials": [
+      "huku_bake",
+      "body_nm"
+    ],
+    "softness": 1.0,
+    "flutter": 0.006,
+    "leg_radius": 0.075
   }
 }

@@ -119,6 +119,35 @@ LINES: dict[str, list[str]] = {
     "music_start": ["Ooh, music! Let's listen together~", "I love this kind of vibe!", "Music time!"],
     "music_stop": ["Aww, the music stopped.", "That was nice."],
     "learned": ["I'll remember that!", "Noted~ I won't forget.", "Got it, saved in my heart."],
+    # anger
+    "angry_hit": ["Ow! Hey!! That hurt! Hmph!", "W-what was that for?! I'm mad at you now!", "Hmph! Don't hit me! Baka!"],
+    "angry_more": ["Again?! I'm REALLY angry now!", "Stop it! Grrr...", "That's it! I'm not talking to you! Hmph!"],
+    "angry_reject": ["Hmph! Don't touch me, I'm still mad!", "Nope. Not forgiving you that easily.", "*turns away* Hmph!",
+                     "...Headpats won't fix everything, you know. ...Maybe a few more."],
+    "forgive_angry": ["...Fine. I'm not mad anymore. Just be nice, okay?", "Hmph... okay, okay, I forgive you~",
+                      "*sigh* I can't stay mad at you..."],
+    "angry_pet": ["Hey!! Don't you DARE hurt my baby!", "Why would you do that to them?! I'm so angry!",
+                  "Leave them alone! Meanie!"],
+    "calm_down": ["...Okay. I'm calm now.", "Hmph. I'm over it. Mostly.", "*deep breath* ...Fine."],
+    # pets & toys
+    "pet_arrived": ["Waah, so cute! Come here~!", "Hi little one! We're going to be best friends!", "Aww, look at you~!"],
+    "toy_arrived": ["Ooh, a toy! Let's play!", "Yay, something to play with~!"],
+    "pet_petted": ["Ehehe, they like you~", "See? So soft, right?", "Aww, they're purring... or wagging!"],
+    "pet_boop": ["Boop! Hehe.", "They said hi back!"],
+    "her_pets": ["Who's a good baby? You are~!", "So fluffy... I could do this all day.", "Pat pat pat~"],
+    "pet_fetched": ["Good puppy! You brought it back!", "Yay, fetch! Again, again!"],
+    "pet_nuzzle": ["Hehe, that tickles!", "Aww, are you snuggling me?"],
+    "gift_teddy": ["For me?! Thank you! *hug*", "Teddy~! I love him!", "So soft and fluffy... thank you!"],
+    "gift_pet": ["Come here, sweetie~ *cuddle*", "Gotcha! Snuggle time~", "Ehehe, so warm and fluffy!"],
+    "gift_ball": ["Hehe, catch!", "Back to you~!", "Hya! Nice pass!"],
+    "her_hugs": ["Teddy time~ *squeeze*", "I just needed a hug."],
+    "kick": ["Hya!", "Goooal!", "Kick~!"],
+    "angry_kick": ["Hmph! *KICK*", "Take THAT, ball!", "Grrr! *kick*"],
+    "bonk": ["Ow!! Don't throw things at me!", "Hey! That hit my head! Hmph!", "Itai! Why would you throw that?!"],
+    # poses on command
+    "pose_ok": ["Okay~!", "Like this?", "Hehe, how's this?", "Sure thing!", "Tada~!"],
+    "pose_angry": ["Hmph. Why should I? ...Fine.", "...Only because you asked."],
+    "pose_cant": ["Hang on, I can't right now!", "Wait, let me get down first!"],
 }
 
 

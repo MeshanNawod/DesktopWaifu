@@ -53,6 +53,11 @@ class FrameContext:
     user_yaw: float = 0.0       # how far you've turned her (mouse wheel / Pose menu), degrees
     spin: float = 0.0           # extra spin while she twirls, degrees
     jump: bool = False          # she jumped on purpose (cute "yay!" pose in the air)
+    user_pitch: float = 0.0     # lean forward / back (right-drag up and down), degrees
+    holding: str = ""           # pet / toy she's hugging: teddy, cat, puppy, bunny...
+    angry: float = 0.0          # 0..1 how angry she is (arms crossed, turns away, steam, vein)
+    pose: str = ""              # pose you asked for: kneel, bow, hands_up, dance... (see poses.py)
+    lie: float = 0.0            # 0..1 lying down (you told her to lie down)
 
 
 # --------------------------------------------------------------------------- procedural

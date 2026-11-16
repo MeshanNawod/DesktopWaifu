@@ -110,7 +110,10 @@ cheeks, hands, legs, body, chest and skirt. Hover over a part and a small hint p
 
 | How | What she does |
 |---|---|
-| **Mouse wheel** over her | **turns her around** (and she stays turned) |
+| **Right-drag** on her | **rotate her freely**: left/right spins her round, up/down leans her (a plain right-click still opens the menu) |
+| **Mouse wheel** over her (Shift+wheel = lean) | turns her around (and she stays turned) |
+| **Tell her** (type or say it): "sit down", "lie down", "kneel", "squat", "bow", "hands up", "salute", "peace sign", "think", "cross your arms", "hands on hips", "dance", "T-pose", "be shy", "stand up"… | she takes that **pose** and holds it until you say "stand up" (also in Right-click → 🧸 Pose & cute → 🧘 Hold a pose). Gemini can pick poses too when you ask in your own words |
+| Touch her while she **sits or holds a pose** | she reacts (face, blush, hearts, voice) **without standing up** |
 | Right-click → **🧸 Pose & cute** → Sit down / Stand up | she sits on the taskbar edge with her legs dangling, until you stand her up |
 | … → Jump! / Hop hop | a real **jump** with gravity, arms up: "Yay~!" |
 | … → Twirl | spins all the way around: "Ta-da~ ♪" |
@@ -119,6 +122,28 @@ cheeks, hands, legs, body, chest and skirt. Hover over a part and a small hint p
 | On her own | when she's happy or playful she does these cute things by herself every now and then |
 
 ![Rotate, sit, jump, twirl, nya, heart, kiss](docs/images/cute_poses.png)
+
+## Getting angry
+
+Hit her (smack, squeeze too hard, throw a toy at her, or hurt her pet) and she gets **angry**: arms crossed, chin up,
+turns her back on you, **steam and a throbbing anger vein**, stomps around and refuses your touches ("Hmph! Don't touch me!").
+Some headpats (or saying **sorry**) calm her down. Keep hitting her and she breaks down crying and sulks instead.
+
+## Pets and toys
+
+Right-click → **🐾 Pets & toys** to bring out **Mochi the kitten, Kuri the puppy, Usa the bunny**, a **bouncy ball**,
+a **teddy bear** and a **yarn ball**. Each one lives on your desktop with real physics.
+
+- **Pick them up and throw them**; click a pet to boop it; double-click or stroke it to pet it (hearts, purring, wagging).
+- **Drop the teddy or a pet on her** and she **hugs it**. Drop the ball on her and she bats it back.
+- Pets follow her, chase the ball and yarn, nuzzle her and nap when she naps. **The puppy plays fetch** and brings the ball back to her.
+- Now and then **she goes over to play**: kicks the ball, pets her pet, hugs her teddy.
+- **Throw something hard at her** and it's a bonk: she gets angry. **Hurt a pet** (hold it squeezed, or slam it down) and she gets angry at you.
+
+## Cloth physics
+
+Loose clothing (skirts, tunic flaps, hems) swings when she moves, is dragged, jumps or falls, ripples in the breeze and gusts,
+and flicks when you touch her. Tune it per model with `"cloth": {"materials": [...], "softness": 1.0, "flutter": 0.006}` in the model's `.json`.
 
 ## Hair physics, wind and knock-downs
 

@@ -43,7 +43,7 @@ ZONE_HINTS = {
     "mouth": "Mouth: click = boop · hold = shush",
     "hand": "♡ Hand: drag = move her arm · drag far = lift her by the hand · double-click = hold hands",
     "leg": "Leg: drag = move her leg · drag far = lift her upside down",
-    "body": "Body: drag = make her lean · drag far = pick her up · hold = squeeze-hug · wheel = turn her",
+    "body": "Body: drag = make her lean · drag far = pick her up · hold = squeeze-hug · right-drag = rotate her",
     "sensitive": "Careful… gentle stroke = shy smile · sudden touch = flustered!",
 }
 
@@ -85,6 +85,7 @@ class CharacterWindow(QWidget):
     knocked = Signal()               # a hard hit knocked her over
     cute = Signal(str)               # she did something cute (jump, twirl, nya, heart, kiss, wave)
     got_up = Signal()                # ...and she's back on her feet
+    held_done = Signal(str)          # she put down the pet / toy she was hugging
     dropped = Signal(float)          # impact speed
     double_clicked = Signal()
     menu_requested = Signal(QPoint)
@@ -139,6 +140,14 @@ class CharacterWindow(QWidget):
         self._prev_pos = (0.0, 0.0)
         self._prev_vel = (0.0, 0.0)
         self._acc = (0.0, 0.0)
+        self.angry_on = False
+        self._hold_left = 0.0
+        self._walk_mul = 1.0
+        self._rot_press: QPointF | None = None
+        self._rot_base = (0.0, 0.0)
+        self._rot_moved = False
+        self._suppress_menu = False
+        self._pose_left = 0.0
 
         self.reload_sprites()
         self.reset_position()
@@ -258,6 +267,22 @@ class CharacterWindow(QWidget):
         if self.sulking or self.user_pose == "sit":
             self._set_state(SIT, duration=1e9)
             return
+        if self.user_pose:                 # holding the pose you asked for
+            self._set_state(IDLE, duration=1e9)
+            return
+        self._walk_mul = 1.0
+        if self.angry_on:
+            # angry: stomps off a few steps (away from your cursor), or stands there, arms crossed, "hmph!"
+            if random.random() < 0.45 and not (self.busy or self.talking):
+                cur = QCursor.pos().x()
+                away = -1 if cur > self.px + self.width() / 2 else 1
+                self.target_x = max(left, min(right, self.px + away * random.uniform(80, 220)))
+                self.ctx.facing_left = self.target_x < self.px
+                self._walk_mul = 1.7
+                self._set_state(WALK, duration=8)
+            else:
+                self._set_state(IDLE, duration=random.uniform(3, 6))
+            return
         cute_chance = 0.28 if self.mood_label in ("happy", "playful") else 0.1
         if not (self.busy or self.talking or self.ctx.music) and random.random() < cute_chance:
             self.do_cute(random.choice(CUTE_ACTIONS))
@@ -297,7 +322,19 @@ class CharacterWindow(QWidget):
         if self._emotion_left > 0:
             self._emotion_left -= dt
             if self._emotion_left <= 0:
-                ctx.emotion = "neutral"
+                ctx.emotion = "angry" if self.angry_on else "neutral"
+        elif self.angry_on and ctx.emotion == "neutral":
+            ctx.emotion = "angry"
+        ctx.angry += ((1.0 if self.angry_on else 0.0) - ctx.angry) * min(1.0, dt * 3)
+        ctx.lie += ((1.0 if ctx.pose == "lie" and self.state in (IDLE, REACT, PET) else 0.0) - ctx.lie) * min(1.0, dt * 4)
+        if self.user_pose and self.user_pose != "sit":
+            self._pose_left -= dt
+            if self._pose_left <= 0:
+                self.stand_up()
+        if ctx.holding:
+            self._hold_left -= dt
+            if self._hold_left <= 0 or self.state == KNOCK:
+                self.release_hold()
         ctx.pet_level = max(0.0, ctx.pet_level - dt * 0.5)
         ctx.beat = max(0.0, ctx.beat - dt * 4.0)
         # struggling settles to a steady wriggle while she's held, and stops once she's down
@@ -348,7 +385,7 @@ class CharacterWindow(QWidget):
                 if self.busy or self.talking:
                     self._set_state(IDLE, duration=2)
                 else:
-                    step = self.cfg.walk_speed * dt * (-1 if self.ctx.facing_left else 1)
+                    step = self.cfg.walk_speed * self._walk_mul * dt * (-1 if self.ctx.facing_left else 1)
                     self.px += step
                     if (self.ctx.facing_left and self.px <= self.target_x) or \
                             (not self.ctx.facing_left and self.px >= self.target_x) or \
@@ -401,6 +438,8 @@ class CharacterWindow(QWidget):
         p = QPainter(self)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
         p.drawImage(0, 0, self._frame)
+        if self.ctx.holding:
+            self._paint_held(p)
         if self.state == KNOCK and 0.25 < self.ctx.state_t < KNOCK_UP:
             p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -413,6 +452,24 @@ class CharacterWindow(QWidget):
                 p.setBrush(QColor("#ffe066"))
                 p.drawPolygon(_star(x, y, 6.5))
         p.end()
+
+    def _paint_held(self, p: QPainter) -> None:
+        from .companions import draw_thing
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        hr = self._head_rect_local()
+        cx, cy = self.width() / 2, hr.bottom() + hr.height() * 0.95
+        s = getattr(self.sprites, "_zones", None)
+        if s is not None and hasattr(self.sprites, "project"):
+            try:
+                z = {n: self.sprites.project(pt) for n, pt, _r in self.sprites._zones()}
+                if "chest" in z:
+                    cx, cy = z["chest"][0], z["chest"][1] + hr.height() * 0.35
+            except Exception:
+                pass
+        size = hr.height() * (1.05 if self.ctx.holding == "teddy" else 1.15)
+        bob = math.sin(self.ctx.t * 2.2) * 1.5
+        draw_thing(p, self.ctx.holding, cx, cy + bob, size)
 
     # ----------------------------------------------------------------- mouse
     def _head_rect_local(self) -> QRectF:
@@ -490,6 +547,12 @@ class CharacterWindow(QWidget):
         if e.button() == Qt.MouseButton.MiddleButton:
             self.double_clicked.emit()      # middle click opens / closes the chat
             return
+        if e.button() == Qt.MouseButton.RightButton:
+            # right-drag = rotate her (left / right spins her round, up / down leans her); a plain right-click = menu
+            self._rot_press = e.globalPosition()
+            self._rot_base = (self.ctx.user_yaw, self.ctx.user_pitch)
+            self._rot_moved = False
+            return
         if e.button() != Qt.MouseButton.LeftButton:
             return
         QToolTip.hideText()
@@ -511,6 +574,21 @@ class CharacterWindow(QWidget):
     def mouseMoveEvent(self, e) -> None:
         gp = e.globalPosition()
         self._cursor_hist.append((time.perf_counter(), gp))
+        if self._rot_press is not None and e.buttons() & Qt.MouseButton.RightButton:
+            d = gp - self._rot_press
+            if not self._rot_moved and d.manhattanLength() > 5:
+                self._rot_moved = True
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
+                QToolTip.hideText()
+            if self._rot_moved:
+                self.ctx.user_yaw = (self._rot_base[0] + d.x() * 0.7 + 180.0) % 360.0 - 180.0
+                self.ctx.user_pitch = max(-35.0, min(35.0, self._rot_base[1] + d.y() * 0.25))
+                if not getattr(self.sprites, "mirrors_itself", False):
+                    self.ctx.facing_left = abs(self.ctx.user_yaw) > 90
+                self.last_interaction = time.monotonic()
+                if self.state == WALK:
+                    self._set_state(IDLE, duration=5)
+            return
         if self._pressed:
             mode = self.gestures.move(gp)
             if mode in ("move", "pull") and not self._dragging:
@@ -614,6 +692,14 @@ class CharacterWindow(QWidget):
         self.broke_free.emit()
 
     def mouseReleaseEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.RightButton:
+            if self._rot_moved:
+                self._suppress_menu = True        # it was a rotation, not a right-click
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+                self.touched.emit("body:turn")
+            self._rot_press = None
+            self._rot_moved = False
+            return
         if e.button() != Qt.MouseButton.LeftButton or not self._pressed:
             return
         self._pressed = False
@@ -647,6 +733,9 @@ class CharacterWindow(QWidget):
             self.gestures.double(self._zone_at(e.position()))
 
     def contextMenuEvent(self, e) -> None:
+        if self._suppress_menu or self._rot_moved:
+            self._suppress_menu = False
+            return
         self.menu_requested.emit(e.globalPos())
 
     def leaveEvent(self, _e) -> None:
@@ -677,17 +766,17 @@ class CharacterWindow(QWidget):
         if hasattr(self.sprites, "react") and kind not in ("tug", "move"):
             self.sprites.react(zone, kind)
         if kind == "rough":
-            self._set_state(REACT, duration=1.8)
+            self._react_state(REACT, 1.8)
             self.set_emotion("hurt", 5.0)
         elif kind == "pet":
             self.ctx.pet_level = 1.0
-            self._set_state(PET, duration=3.0)
+            self._react_state(PET, 3.0)
             self.set_emotion(random.choice(["shy", "happy"]), 5.0)
             if zone == "head":
                 self.petted.emit()
         elif kind == "squeeze":
             self.ctx.pet_level = max(self.ctx.pet_level, 0.6)
-            self._set_state(REACT, duration=1.4)
+            self._react_state(REACT, 1.4)
             self.set_emotion("squeezed", 3.0)
         elif kind in ("move", "tug"):
             if self.state in (WALK, SLEEP):
@@ -695,16 +784,44 @@ class CharacterWindow(QWidget):
         else:
             if zone in SOFT_ZONES:
                 self.ctx.pet_level = max(self.ctx.pet_level, 0.3)
-            self._set_state(REACT, duration=1.4)
+            self._react_state(REACT, 1.4)
             self.set_emotion("happy" if zone in SOFT_ZONES or zone == "head" else ZONE_EMOTION.get(zone, "surprised"), 3.5)
         self.touched.emit(f"{zone}:{kind}")
         if zone == "body":
             self.poked.emit()
 
+    def _react_state(self, st: str, seconds: float) -> None:
+        """React to a touch. While she's sitting or holding a pose she stays put (face, blush, hearts only)."""
+        if self.state == SIT or (self.user_pose and self.state not in (WALK, SLEEP)):
+            self.next_action = max(self.next_action, seconds)
+            return
+        self._set_state(st, duration=seconds)
+
+    def do_pose(self, name: str) -> bool:
+        """Hold a pose you asked for (see poses.HELD). Returns False if she can't right now."""
+        if name == "stand":
+            self.stand_up()
+            return True
+        if name == "sit":
+            self.ctx.pose = ""
+            self.sit_down()
+            return True
+        if self.state in (DRAG, FALL, KNOCK):
+            return False
+        self.user_pose = name
+        self.ctx.pose = name
+        self._pose_left = 300.0 if name == "lie" else 150.0
+        self._spin_left = 0.0
+        self._set_state(IDLE, duration=1e9)
+        return True
+
     # ----------------------------------------------------------------- poses you control / cute actions
     def wheelEvent(self, e) -> None:
         """Mouse wheel over her: turn her around."""
         steps = e.angleDelta().y() / 120.0
+        if e.modifiers() & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier):
+            self.ctx.user_pitch = max(-35.0, min(35.0, self.ctx.user_pitch + steps * 6.0))   # shift+wheel: lean
+            return
         yaw = self.ctx.user_yaw + steps * 20.0
         self.ctx.user_yaw = (yaw + 180.0) % 360.0 - 180.0
         self.last_interaction = time.monotonic()
@@ -720,16 +837,19 @@ class CharacterWindow(QWidget):
 
     def face_me(self) -> None:
         self.ctx.user_yaw = 0.0
+        self.ctx.user_pitch = 0.0
         if not getattr(self.sprites, "mirrors_itself", False):
             self.ctx.facing_left = False
 
     def sit_down(self) -> None:
+        self.ctx.pose = ""
         self.user_pose = "sit"
         if self.state not in (DRAG, FALL, KNOCK):
             self._set_state(SIT, duration=1e9)
 
     def stand_up(self) -> None:
         self.user_pose = None
+        self.ctx.pose = ""
         if self.state in (SIT, SLEEP):
             self._set_state(REACT, duration=1.0)
 
@@ -773,6 +893,58 @@ class CharacterWindow(QWidget):
                 self.jump(0.5)               # 2D characters: a happy little hop instead
             self.set_emotion({"nya": "playful", "heart": "shy", "kiss": "shy"}.get(name, "happy"), 3.5)
         self.cute.emit(name)
+
+    # ----------------------------------------------------------------- anger, pets & toys
+    def set_angry(self, on: bool) -> None:
+        """Angry: arms crossed, turns her back on you, steam + anger vein, stomps around, won't do cute stuff."""
+        self.angry_on = on
+        if on:
+            self.set_emotion("angry", 4.0)
+            if self.state in (SIT, WALK) and self.user_pose != "sit":
+                self._set_state(IDLE, duration=3.0)
+        else:
+            self._walk_mul = 1.0
+            if self.ctx.emotion == "angry":
+                self.ctx.emotion = "neutral"
+
+    def hold(self, kind: str, seconds: float = 14.0) -> None:
+        """Hug a pet / toy for a while."""
+        self.ctx.holding = kind
+        self._hold_left = seconds
+        if self.state == WALK:
+            self._set_state(IDLE, duration=seconds)
+        self.ctx.pet_level = max(self.ctx.pet_level, 0.8)
+        self.set_emotion("happy", 4.0)
+
+    def release_hold(self) -> None:
+        kind = self.ctx.holding
+        if kind:
+            self.ctx.holding = ""
+            self._hold_left = 0.0
+            self.held_done.emit(kind)
+
+    def kick(self) -> None:
+        if self.state not in (DRAG, FALL, KNOCK, SLEEP):
+            self._set_state(REACT, duration=0.8)
+            if hasattr(self.sprites, "react"):
+                self.sprites.react("legs", "tap")
+
+    def pet_animal(self) -> None:
+        """She pets her pet: happy closed eyes, hearts."""
+        if self.state not in (DRAG, FALL, KNOCK, SLEEP):
+            self._set_state(REACT, duration=2.0)
+            self.ctx.pet_level = 0.8
+            self.set_emotion("happy", 3.5)
+
+    def walk_to(self, gx: float) -> None:
+        """Walk so that her centre ends up at global x."""
+        left, right, _ = self._floor()
+        tx = max(left, min(right, gx - self.width() / 2))
+        if abs(tx - self.px) < 10 or self.state in (DRAG, FALL, SLEEP, KNOCK):
+            return
+        self.target_x = tx
+        self.ctx.facing_left = tx < self.px
+        self._set_state(WALK, duration=30)
 
     # ----------------------------------------------------------------- attention-seeking moves
     def walk_to_cursor(self) -> float:

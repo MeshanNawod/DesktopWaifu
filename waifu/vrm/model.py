@@ -77,6 +77,7 @@ class Material:
     queue: int = 0
     uv_xf: np.ndarray = field(default_factory=lambda: np.eye(3))
     colorize: list | None = None   # [r, g, b, strength]: recolour the texture (e.g. pink hair)
+    cloth: bool = False            # procedural cloth physics applies to this material
 
 
 @dataclass
@@ -238,6 +239,10 @@ class VrmModel:
             for i, mn in enumerate(mat_names):
                 if mn == name and i < len(self.materials):
                     self.materials[i].colorize = list(col)
+        for name in self.options.get("cloth", {}).get("materials", []):
+            for i, mn in enumerate(mat_names):
+                if mn == name and i < len(self.materials):
+                    self.materials[i].cloth = True
         if not self.materials:
             self.materials = [Material()]
 

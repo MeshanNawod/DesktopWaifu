@@ -2,7 +2,9 @@
 
     AWAKE --idle long / "good night" / night time--> SLEEPING
     SLEEPING --click, gentle pat, voice ("wake up", her name), you return to the webcam--> AWAKE
-    any --rough touch (hit, smack, poke in the eye)--> HURT (sulks; gentle touches or "sorry" heal her)
+    any --rough touch (hit, smack, a toy thrown at her, hurting her pet)--> ANGRY
+          (arms crossed, turns away, "hmph!"; pets + time or "sorry" calm her down)
+    ANGRY --keep hurting her (4+ hits in 20 s)--> HURT (cries and sulks; gentle touches or "sorry" heal her)
     AWAKE --lots of affection (mood >= 85)--> HAPPY (bouncy, for a while)
     AWAKE/HAPPY --music playing--> LISTENING (bobs to the beat)
 
@@ -20,7 +22,7 @@ from PySide6.QtCore import QObject, Signal
 from .config import Config
 from .database import Memory
 
-AWAKE, SLEEPING, HURT, HAPPY, LISTENING = "awake", "sleeping", "hurt", "happy", "listening"
+AWAKE, SLEEPING, HURT, HAPPY, LISTENING, ANGRY = "awake", "sleeping", "hurt", "happy", "listening", "angry"
 APOLOGY_WORDS = ("sorry", "apologize", "apologise", "my bad", "forgive me", "samawenna", "samaawenna",
                  "samawela", "gomen", "i didn't mean")
 NICE_ZONES = {"head", "hand", "cheek"}
@@ -54,6 +56,7 @@ class EmotionEngine(QObject):
         self._label = ""
         self._label_until = 0.0
         self._taps: list[float] = []
+        self._calm = 0.0
 
     # ------------------------------------------------------------------ queries
     def baseline(self) -> float:
@@ -68,6 +71,8 @@ class EmotionEngine(QObject):
         situation = {
             SLEEPING: "You were asleep until just now.",
             HURT: "You are hurt and sulking because they were rough with you.",
+            ANGRY: "You are ANGRY at them because they hurt you (or your pet): pouty, huffy, 'hmph!', arms crossed. "
+                   "You still secretly care, and an apology or gentle headpats will calm you down.",
             HAPPY: "You are bubbly and extra happy right now.",
             LISTENING: "You are listening to music together.",
         }.get(self.state, "")
@@ -119,6 +124,15 @@ class EmotionEngine(QObject):
             self.wake(gentle=kind != "rough")
             if kind != "rough":
                 return Reaction("happy", "wake_gentle", 3, 0.5, woke=True)
+        if self.state == ANGRY and kind != "rough":
+            self._calm += {"pet": 1.0, "gentle": 0.35, "squeeze": 0.25}.get(kind, 0.15)
+            if self._calm >= 3.0 or (self._calm >= 1.5 and self.affection >= 60):
+                self._adjust(8, 0.5)
+                self._set(LISTENING if self.music_on else AWAKE)
+                self._flavour("shy", 15)
+                return Reaction("shy", "forgive_angry", 8, 0.5, woke)
+            self._adjust(1.0 if kind == "pet" else -0.5, 0)
+            return Reaction("angry", "angry_reject", 0, 0, woke)
         if zone in TOUCHY_ZONES:
             # sensitive areas are context-aware:
             #  a gentle stroke (when she trusts you) -> sweet shy smile, affection up
@@ -155,8 +169,13 @@ class EmotionEngine(QObject):
             self.mem.bump("hits")
             if len(self._hits) == 1:
                 self.mem.event("hurt", f"They hit my {zone}.")
-            self._set(HURT, 25 + 15 * len(self._hits))
-            return Reaction("hurt", "too_hard" if len(self._hits) < 3 else "hurt_repeat", hurt, 0, woke)
+            n = len(self._hits)
+            self._calm = 0.0
+            if n >= 4:                         # too much: she breaks down crying
+                self._set(HURT, 30 + 10 * n)
+                return Reaction("hurt", "hurt_repeat", hurt, 0, woke)
+            self._set(ANGRY, 25 + 12 * n)
+            return Reaction("angry", "angry_hit" if n == 1 else "angry_more", hurt, 0, woke)
         if kind == "tug" and zone in ("hair", "scarf"):
             # pulling her hair: a cute, slightly pouting "ouch, don't pull!"
             self._adjust(-3, -0.5)
@@ -206,6 +225,8 @@ class EmotionEngine(QObject):
             return "sleepy"
         if self.state == HURT:
             return "upset"
+        if self.state == ANGRY:
+            return "angry"
         if self._label and time.monotonic() < self._label_until:
             return self._label
         if self.state in (HAPPY, LISTENING) or self.mood >= 78:
@@ -218,6 +239,15 @@ class EmotionEngine(QObject):
         if self.affection >= 70 and self.mood >= 60:
             return "playful" if int(time.monotonic() / 90) % 3 == 0 else "happy"
         return "neutral"
+
+    def angered(self, why: str = "") -> str:
+        """Something made her angry that wasn't a touch on her (e.g. you hurt her pet). Returns the line key."""
+        self._hits = [t for t in self._hits if time.monotonic() - t < 20] + [time.monotonic()]
+        self._calm = 0.0
+        self._adjust(-7, -2)
+        self.mem.event("angry", f"They hurt my {why}." if why else "They made me angry.")
+        self._set(ANGRY, 35)
+        return "angry_pet" if why else "angry_hit"
 
     def struggle(self, limb: str) -> str:
         """Lifted off the ground (by a hand / leg / her body): she wriggles. Returns the line key."""
@@ -234,7 +264,7 @@ class EmotionEngine(QObject):
 
     def apology(self, text: str) -> bool:
         low = text.lower()
-        if self.state == HURT and any(w in low for w in APOLOGY_WORDS):
+        if self.state in (HURT, ANGRY) and any(w in low for w in APOLOGY_WORDS):
             self._adjust(15, 1)
             self._set(LISTENING if self.music_on else AWAKE)
             self.mem.event("forgive", "They apologised and I forgave them.")
@@ -251,7 +281,7 @@ class EmotionEngine(QObject):
         if self.music_on and self.state == LISTENING:
             b += 10
         self.mood += max(-step, min(step, b - self.mood))
-        if self._until and time.monotonic() > self._until and self.state in (HURT, HAPPY):
+        if self._until and time.monotonic() > self._until and self.state in (HURT, HAPPY, ANGRY):
             self._set(LISTENING if self.music_on else AWAKE)
         now = time.monotonic()
         if now - self._save_t > 30:

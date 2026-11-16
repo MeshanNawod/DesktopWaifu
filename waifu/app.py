@@ -17,7 +17,9 @@ from .camera import CameraWatcher
 from .waifu_core import CharacterWindow
 from .attention import AttentionEngine
 from .config import Config
-from .emotion import AWAKE, HAPPY, HURT, LISTENING, SLEEPING, EmotionEngine
+from .companions import LABELS as COMPANION_LABELS, NAMES as COMPANION_NAMES, PETS, TOYS, Playground
+from .emotion import ANGRY, AWAKE, HAPPY, HURT, LISTENING, SLEEPING, EmotionEngine
+from .poses import HELD as HELD_POSES, parse_command, pop_pose_tag
 from .database import Memory
 from .music import MusicListener, now_playing
 from .reactions import line
@@ -154,6 +156,10 @@ class WaifuApp(QObject):
         self._build_tray()
         self._apply_senses()
         c.show()
+        self.play = Playground(c, self.cfg)
+        self.play.event.connect(self._on_play)
+        self.play.menu_requested.connect(self._show_menu)
+        QTimer.singleShot(1200, self.play.restore)
 
         if not self.cfg.effective_api_key():
             QTimer.singleShot(1500, self._first_run)
@@ -199,6 +205,9 @@ class WaifuApp(QObject):
         m = REMEMBER_RE.match(text)
         if m:
             self.brain.remember(m.group(1).strip())
+        cmd = parse_command(text)
+        if cmd and self.do_command(cmd):
+            return
         if any(w in low for w in SLEEP_WORDS):
             self.say(line("fall_asleep"), "sleepy")
             QTimer.singleShot(2500, self.emotion.sleep)
@@ -214,7 +223,36 @@ class WaifuApp(QObject):
         self.character.set_emotion("thinking", 30)
         self.brain.ask(text)
 
+    def do_command(self, name: str, quiet: bool = False) -> bool:
+        """Do a pose / action you asked for. Returns True if it was handled."""
+        c = self.character
+        if self.emotion.state == SLEEPING:
+            self.emotion.wake(gentle=True)
+        angry = self.emotion.state in (ANGRY, HURT)
+        if name in HELD_POSES or name == "stand":
+            if not c.do_pose(name):
+                self.say(line("pose_cant"), "surprised")
+                return True
+        elif name == "turn_around":
+            c.rotate_by(180)
+        elif name == "face_me":
+            c.face_me()
+        elif name == "sleep":
+            QTimer.singleShot(1500, self.emotion.sleep)
+        else:
+            if c.user_pose:
+                c.stand_up()
+            c.do_cute(name)
+        if not quiet:
+            self._last_quip = 0.0
+            key = "pose_angry" if angry else {"stand": "stand_up", "sit": "sit_down"}.get(name, "pose_ok")
+            self.say(line(key), "pout" if angry else "happy")
+        return True
+
     def on_reply(self, text: str, emotion: str) -> None:
+        text, pose = pop_pose_tag(text)
+        if pose:
+            self.do_command(pose, quiet=True)
         self.last_exchange = time.monotonic()
         self.bubble.stop_thinking()
         self.chat.add_message(self.cfg.name, text, "her")
@@ -239,6 +277,9 @@ class WaifuApp(QObject):
     def on_touch(self, event: str) -> None:
         self.attention.engaged()
         zone, _, kind = event.partition(":")
+        if kind == "turn":                      # you rotated her (right-drag)
+            self._quip("turned", "surprised", chance=0.5)
+            return
         group = ZONE_GROUP.get(zone, zone)
         was_asleep = self.emotion.state == SLEEPING
         r = self.emotion.touch(group, kind or "tap")
@@ -265,6 +306,41 @@ class WaifuApp(QObject):
             return
         self._last_quip = now
         self.say(line(r.line), r.emotion)
+
+    def _on_play(self, what: str, kind: str) -> None:
+        name = COMPANION_NAMES.get(kind, kind)
+        self.attention.engaged()
+        if what == "pet_hurt":
+            key = self.emotion.angered(name)
+            self._last_quip = 0.0
+            self.say(line(key), "angry")
+            return
+        if what == "bonk":
+            self._last_quip = 0.0
+            self._quip("bonk", "angry")
+            return
+        if what == "arrived":
+            self._last_quip = 0.0
+            self._quip("pet_arrived" if kind in PETS else "toy_arrived", "excited")
+            return
+        if what == "gift":
+            self.emotion._adjust(3, 1.0)
+            self._last_quip = 0.0
+            self._quip("gift_teddy" if kind == "teddy" else "gift_pet" if kind in PETS else "gift_ball", "happy")
+            return
+        if what in ("her_pets", "her_hugs", "pet_fetched"):
+            self.emotion._adjust(1.5, 0.2)
+            self._quip(what, "happy", chance=0.8)
+            return
+        if what in ("kick", "angry_kick"):
+            self._quip(what, "angry" if what == "angry_kick" else "playful", chance=0.5)
+            return
+        if what == "pet_petted":
+            self.emotion._adjust(1.0, 0.3)
+            self._quip("pet_petted", "happy", chance=0.35)
+            return
+        if what in ("pet_boop", "pet_nuzzle"):
+            self._quip(what, "happy", chance=0.3)
 
     def _on_pickup(self, limb: str = "body") -> None:
         key = self.emotion.struggle(limb)
@@ -296,6 +372,12 @@ class WaifuApp(QObject):
             c.set_emotion("hurt", 30)
         elif old == HURT:
             c.set_sulk(False)
+        if new == ANGRY:
+            c.set_angry(True)
+        elif old == ANGRY:
+            c.set_angry(False)
+            if new in (AWAKE, LISTENING):
+                QTimer.singleShot(400, lambda: (setattr(self, "_last_quip", 0.0), self._quip("calm_down", "pout", 0.6)))
         if new == HAPPY:
             c.set_emotion("excited", 10)
             if hasattr(c.sprites, "start_gesture"):
@@ -601,10 +683,30 @@ class WaifuApp(QObject):
         pose.addAction("💖 Heart", lambda: c.do_cute("heart"))
         pose.addAction("💋 Blow a kiss", lambda: c.do_cute("kiss"))
         pose.addAction("👋 Wave", lambda: c.do_cute("wave"))
+        held = pose.addMenu("🧘 Hold a pose")
+        for nm, lbl in (("lie", "🛌 Lie down"), ("kneel", "🙇 Kneel (seiza)"), ("squat", "Squat"), ("bow", "🙇 Bow"),
+                        ("hands_up", "🙌 Hands up!"), ("salute", "🫡 Salute"), ("peace", "✌ Peace sign"),
+                        ("think", "🤔 Thinking"), ("arms_crossed", "Arms crossed"), ("hands_on_hips", "Hands on hips"),
+                        ("hug_self", "Hug herself"), ("shy", "Shy pose"), ("dance", "💃 Dance"), ("t_pose", "T-pose")):
+            held.addAction(lbl, lambda n=nm: self.do_command(n))
+        held.addSeparator()
+        held.addAction("🧍 Stand normally", lambda: self.do_command("stand"))
         pose.addSeparator()
         pose.addAction("↻ Turn around", lambda: (c.rotate_by(180), self._quip("turned", "surprised")))
         pose.addAction("↺ Turn a little", lambda: c.rotate_by(45))
         pose.addAction("🙂 Face me", c.face_me)
+        pt = m.addMenu("🐾 Pets & toys")
+        out = self.play.kinds() if hasattr(self, "play") else []
+        for kinds in (PETS, TOYS):
+            for k in kinds:
+                act = QAction(COMPANION_LABELS[k], pt, checkable=True, checked=k in out)
+                act.triggered.connect(lambda _=False, kk=k: self.play.toggle(kk))
+                pt.addAction(act)
+            pt.addSeparator()
+        if "teddy" in out:
+            pt.addAction("🧸 Give her the teddy", lambda: self.play._hug(self.play.get("teddy")))
+        if out:
+            pt.addAction("Put them all away", self.play.clear)
         chars = m.addMenu("👗 Character")
         cur_path = (self.cfg.vrm_path or default_vrm()).lower()
         for label, style, path in list_characters():

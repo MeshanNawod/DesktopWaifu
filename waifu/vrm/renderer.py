@@ -52,6 +52,21 @@ uniform int uArmOn;
 uniform vec3 uSqzCenter;
 uniform float uSqzRadius;
 uniform float uSqzAmount;
+// procedural cloth: loose clothing below the waist that isn't hugging a leg swings and flutters
+uniform int uClothMat;          // this material is clothing
+uniform int uClothOn;
+uniform float uHipY;
+uniform float uClothLen;
+uniform vec3 uLegL0; uniform vec3 uLegL1; uniform vec3 uLegR0; uniform vec3 uLegR1;
+uniform vec3 uClothOff;         // spring offset (world): lag / swing
+uniform float uFlutter;         // breeze ripple strength
+uniform float uTime;
+uniform float uLegRadius;
+float segDist(vec3 p, vec3 a, vec3 b) {
+    vec3 ab = b - a;
+    float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+    return length(p - (a + ab * t));
+}
 uniform float uArmY;
 uniform float uShoulderX;
 uniform vec2 uArmAng;
@@ -100,6 +115,18 @@ void main() {
     }
     vec4 wp = m * vec4(pos, 1.0);
     vec3 n = normalize(mat3(m) * nrm);
+    if (uClothOn == 1 && uClothMat == 1) {
+        float below = clamp((uHipY - wp.y) / max(uClothLen, 1e-3), 0.0, 1.2);
+        float legd = min(segDist(wp.xyz, uLegL0, uLegL1), segDist(wp.xyz, uLegR0, uLegR1));
+        float loose = smoothstep(uLegRadius, uLegRadius * 1.6, legd);
+        float w = below * below * loose;
+        if (w > 0.0) {
+            vec3 rip = vec3(sin(uTime * 6.0 + wp.y * 22.0 + wp.x * 14.0),
+                            0.0,
+                            cos(uTime * 5.0 + wp.y * 18.0 - wp.x * 11.0)) * uFlutter;
+            wp.xyz += (uClothOff + rip) * w;
+        }
+    }
     if (abs(uSqzAmount) > 0.001) {
         vec2 d = wp.xy - uSqzCenter.xy;
         float f = (1.0 - smoothstep(0.0, uSqzRadius, length(d))) * uSqzAmount;
@@ -361,7 +388,7 @@ class VrmRenderer:
 
     def render(self, W: np.ndarray, view_proj: np.ndarray, morph: dict[int, dict[int, float]],
                light_dir=(-0.35, 0.55, 0.76), deform: dict | None = None,
-               squeeze: tuple | None = None) -> QImage:
+               squeeze: tuple | None = None, cloth: dict | None = None) -> QImage:
         m = self.m
         self.ctx.makeCurrent(self.surface)
         self.fbo.bind()
@@ -381,6 +408,16 @@ class VrmRenderer:
         gl.glUniform3f(self.loc("uSqzCenter"), float(c[0]), float(c[1]), float(c[2]))
         gl.glUniform1f(self.loc("uSqzRadius"), float(r))
         gl.glUniform1f(self.loc("uSqzAmount"), float(a))
+        gl.glUniform1i(self.loc("uClothOn"), 1 if cloth else 0)
+        if cloth:
+            gl.glUniform1f(self.loc("uHipY"), float(cloth["hip_y"]))
+            gl.glUniform1f(self.loc("uClothLen"), float(cloth["length"]))
+            for name in ("uLegL0", "uLegL1", "uLegR0", "uLegR1"):
+                gl.glUniform3f(self.loc(name), *[float(v) for v in cloth[name]])
+            gl.glUniform3f(self.loc("uClothOff"), *[float(v) for v in cloth["offset"]])
+            gl.glUniform1f(self.loc("uFlutter"), float(cloth["flutter"]))
+            gl.glUniform1f(self.loc("uTime"), float(cloth["time"]))
+            gl.glUniform1f(self.loc("uLegRadius"), float(cloth["leg_radius"]))
         gl.glUniform1i(self.loc("uDeform"), 1 if deform else 0)
         if deform:
             gl.glUniform1f(self.loc("uNeck"), deform["neck"])
@@ -445,6 +482,7 @@ class VrmRenderer:
             cz = mat.colorize or [0.0, 0.0, 0.0, 0.0]
             gl.glUniform4f(self.loc("uColorize"), *[float(v) for v in cz[:4]])
             gl.glUniform1f(self.loc("uColorLift"), float(cz[4]) if len(cz) > 4 else 0.6)
+            gl.glUniform1i(self.loc("uClothMat"), 1 if mat.cloth else 0)
             gl.glUniformMatrix3fv(self.loc("uUVXf"), 1, gl.GL_TRUE, mat.uv_xf.astype(np.float32))
             gl.glDepthMask(gl.GL_TRUE if mat.zwrite else gl.GL_FALSE)
             gl.glBindVertexArray(g.vao)

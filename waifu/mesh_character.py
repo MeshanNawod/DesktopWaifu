@@ -16,6 +16,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap, QRadialGradient
 
+from .cloth import ClothSim
 from .fbx.mesh import load_fbx_mesh
 from .sprites import DRAG, FALL, IDLE, PET, REACT, SIT, SLEEP, WALK, FrameContext, _heart, _pen, draw_steam
 from .vrm.math3d import ortho, q_axis, q_mul, q_rotate, q_to_m3, rot_m4, translate
@@ -80,6 +81,7 @@ class MeshModel:
         self.textures = [{"source": i} for i in range(len(files))]
         mat = Material(tex=0 if files else None, shade=[0.62, 0.6, 0.66], shade_shift=0.15, shade_toony=0.55,
                        double_sided=True)
+        mat.cloth = bool(meta.get("cloth"))
         self.materials = [mat]
         prim = Prim(0, p.astype(np.float32), mesh.nrm, mesh.uv, None, None, mesh.idx, 0)
         self.mesh_prims = {0: [prim]}
@@ -102,6 +104,9 @@ class MeshCharacter:
         self.dpr = dpr
         self.gl = VrmRenderer(m, round(self.W * dpr), round(self.H * dpr))
         self._analyse()
+        co = m.meta.get("cloth", {})
+        self.cloth = ClothSim(m.height, float(co.get("softness", 1.0)), float(co.get("flutter", 0.005))) if co else None
+        self._cloth_leg_r = float(co.get("leg_radius", 0.07)) * m.height
         self.t = 0.0
         self.yaw = 0.0
         self.look = [0.0, 0.0]
@@ -260,6 +265,9 @@ class MeshCharacter:
 
     def react(self, zone: str, kind: str = "tap") -> None:
         self.squash_v += 0.35 if kind in ("pet", "squeeze", "gentle") else 0.6     # jelly bounce
+        if self.cloth is not None:
+            strong = 3.0 if zone in ("skirt", "body", "chest", "leg_l", "leg_r") or kind == "rough" else 1.2
+            self.cloth.kick((random.choice((-1, 1)) * 0.25 * strong, 0.05, 0.2 * strong))
         if kind == "squeeze":
             self.timers["blush"] = 3.0
             self.timers["happy"] = 0.8
@@ -437,6 +445,8 @@ class MeshCharacter:
             ty = -55.0 if ctx.facing_left else 55.0
         elif ctx.emotion == "hurt":
             ty = -35.0 if self.look[0] >= 0 else 35.0
+        elif ctx.angry > 0.3 and state in (IDLE, REACT):
+            ty = (-35.0 if self.look[0] >= 0 else 35.0) + ctx.user_yaw
         else:
             ty = self.look[0] * 12 + ctx.user_yaw
         self.yaw += (ty - self.yaw) * min(1.0, dt * 5)
@@ -450,12 +460,18 @@ class MeshCharacter:
             self.yaw *= max(0.0, 1 - dt * 6)
         h = self.m.height
         piv = np.array([0, h * 0.85, 0])
-        self._root = (translate(0, hop, 0) @ translate(*piv) @ rot_m4(q_axis((0, 0, 1), tilt)) @ translate(*-piv)
-                      @ rot_m4(q_mul(q_axis((0, 0, 1), ctx.knock_dir * 14 * ctx.knock), q_axis((1, 0, 0), -82 * ctx.knock)))
-                      @ rot_m4(q_axis((0, 1, 0), (self.yaw + ctx.spin) * (1 - ctx.knock))))
+        self._pitch = getattr(self, "_pitch", 0.0) + (ctx.user_pitch - getattr(self, "_pitch", 0.0)) * min(1.0, dt * 10)
+        self._root = (rot_m4(q_axis((1, 0, 0), self._pitch * (1 - ctx.knock))) @ translate(0, hop, 0) @ translate(*piv) @ rot_m4(q_axis((0, 0, 1), tilt)) @ translate(*-piv)
+                      @ rot_m4(q_mul(q_axis((0, 0, 1), ctx.knock_dir * 14 * ctx.knock),
+                                     q_axis((1, 0, 0), -82 * max(ctx.knock, ctx.lie * 0.92))))
+                      @ rot_m4(q_axis((0, 1, 0), (self.yaw + ctx.spin) * (1 - max(ctx.knock, ctx.lie)))))
         half = WIDTH_M * h / 2
         self._vp = ortho(-half, half, -BOT_M * h, (1 + TOP_M) * h, -10, 10)
         self._pin_limb(ctx, dt)
+        if self.cloth is not None:
+            wind = np.array([math.sin(t * 1.3) * 0.9 + math.sin(t * 3.1) * 0.35, 0.1, math.cos(t * 0.9) * 0.7])
+            phase = t * math.tau * 1.7 if state == WALK else None
+            self.cloth.step(dt, np.array([ax, -ay, 0.0]) / self.ppm, np.array([vx, -vy, 0.0]) / self.ppm, wind, phase)
 
     def _pin_limb(self, ctx: FrameContext, dt: float) -> None:
         """Lifted by a hand or leg: hang from it, pinned under the cursor, swinging like a pendulum."""
@@ -498,7 +514,15 @@ class MeshCharacter:
                   "arms": (self.arm_on, getattr(self, "arm_y", 0.0), getattr(self, "shoulder_x", 0.0),
                            float(self.arm_ang[0]), float(self.arm_ang[1]))}
         sq = (self._sq_center, self._sq_radius, self._sq * 0.85) if abs(self._sq) > 0.01 else None
-        img = self.gl.render(W, self._vp, {}, deform=deform, squeeze=sq)
+        cloth = None
+        if self.cloth is not None:
+            hp = self._world([0, 0.52 * h, 0])
+            cloth = {"hip_y": hp[1], "length": 0.24 * h,
+                     "uLegL0": self._world([0.06 * h, 0.5 * h, 0]), "uLegL1": self._world([0.06 * h, 0.04 * h, 0]),
+                     "uLegR0": self._world([-0.06 * h, 0.5 * h, 0]), "uLegR1": self._world([-0.06 * h, 0.04 * h, 0]),
+                     "offset": self.cloth.off, "flutter": self.cloth.flutter, "time": self.t,
+                     "leg_radius": self._cloth_leg_r}
+        img = self.gl.render(W, self._vp, {}, deform=deform, squeeze=sq, cloth=cloth)
         img.setDevicePixelRatio(self.dpr)
         p = QPainter(img)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -558,8 +582,8 @@ class MeshCharacter:
                 p.setBrush(QColor(140, 200, 255, int(230 * (1 - slide))))
                 p.drawEllipse(QPointF(x, y), 2.2, 3.0)
         top = self.project(self._world(self.head_c + np.array([0, self.head_r * 1.4, 0])))
-        if self.timers["steam"] > 0 or ctx.emotion == "flustered":
-            draw_steam(p, top[0], top[1] + 6, t, 0.9)
+        if self.timers["steam"] > 0 or ctx.emotion == "flustered" or ctx.angry > 0.5:
+            draw_steam(p, top[0], top[1] + 6, t, 0.9 + 0.3 * ctx.angry)
         if ctx.emotion == "angry":
             x, y = top[0] - 16, top[1] + 10
             p.setPen(_pen(QColor("#ff3b3b"), 2.2))

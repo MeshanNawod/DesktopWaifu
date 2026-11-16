@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 GAZES = ["direct", "side_glance", "downcast", "upward", "half_lidded", "closed", "sparkle", "wink"]
 FACES = ["calm", "gentle_smile", "beaming", "teasing_smirk", "pout", "blush", "startled", "sorrowful"]
 EXPRESSIONS = [f"{g}+{f}" for g in GAZES for f in FACES]          # the 64 expressions
-MOODS = ["neutral", "happy", "shy", "flustered", "sleepy", "upset", "playful"]
+MOODS = ["neutral", "happy", "shy", "flustered", "sleepy", "upset", "playful", "angry"]
 
 MOOD_PREFS: dict[str, tuple[dict[str, float], dict[str, float]]] = {
     "neutral":   ({"direct": 5, "side_glance": 2, "upward": 1}, {"calm": 4, "gentle_smile": 4}),
@@ -37,11 +37,12 @@ MOOD_PREFS: dict[str, tuple[dict[str, float], dict[str, float]]] = {
     "upset":     ({"downcast": 4, "side_glance": 4, "half_lidded": 1}, {"sorrowful": 5, "pout": 5}),
     "playful":   ({"direct": 3, "side_glance": 3, "wink": 2, "sparkle": 2}, {"teasing_smirk": 6, "beaming": 3, "gentle_smile": 1}),
     "struggling": ({"side_glance": 3, "closed": 2, "direct": 2, "upward": 1}, {"startled": 5, "pout": 4, "sorrowful": 1}),
+    "angry":     ({"side_glance": 5, "half_lidded": 3, "closed": 1, "direct": 1}, {"pout": 8, "startled": 1}),
 }
 # what a Gemini emotion tag / touch emotion means for her mood
 EMOTION_MOOD = {
     "happy": "happy", "excited": "happy", "shy": "shy", "flustered": "flustered", "surprised": "flustered",
-    "sleepy": "sleepy", "sad": "upset", "angry": "upset", "hurt": "upset", "playful": "playful",
+    "sleepy": "sleepy", "sad": "upset", "angry": "angry", "hurt": "upset", "playful": "playful",
     "thinking": "neutral", "neutral": "neutral", "struggling": "struggling", "pout": "upset", "squeezed": "flustered", "lonely": "upset",
 }
 

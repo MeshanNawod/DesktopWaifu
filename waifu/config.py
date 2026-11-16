@@ -91,6 +91,7 @@ class Config:
     always_on_top: bool = True
     bubble_seconds: float = 7.0
     force_hit_mask: bool = False           # fallback if click-through misbehaves
+    companions: list[str] = field(default_factory=list)   # pets & toys out on the desktop
 
     def effective_api_key(self) -> str:
         return (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
