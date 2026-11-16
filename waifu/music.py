@@ -63,6 +63,16 @@ class MusicListener(QObject):
             self.playing_changed.emit(False)
 
     def _loop(self) -> None:
+        """Keep listening; if the audio device changes (headphones plugged / unplugged), reconnect."""
+        failures = 0
+        while not self._stop.is_set():
+            ok = self._listen_once(quiet=failures > 0)
+            if self._stop.is_set():
+                break
+            failures = 0 if ok else failures + 1
+            self._stop.wait(2.0 if failures < 5 else 15.0)
+
+    def _listen_once(self, quiet: bool = False) -> bool:
         try:
             try:
                 import pythoncom
@@ -74,8 +84,9 @@ class MusicListener(QObject):
             spk = sc.default_speaker()
             mic = sc.get_microphone(id=str(spk.name), include_loopback=True)
         except Exception as e:  # noqa: BLE001
-            self.error.emit(f"Can't listen to system audio: {e}")
-            return
+            if not quiet:
+                self.error.emit(f"Can't listen to system audio: {e}")
+            return False
         hist: deque[float] = deque(maxlen=43)       # ~1 s of bass energy
         beats: deque[float] = deque(maxlen=16)
         last_beat = 0.0
@@ -128,8 +139,13 @@ class MusicListener(QObject):
                             self.playing = False
                             self.playing_changed.emit(False)
         except Exception as e:  # noqa: BLE001
-            log.exception("Music listener stopped")
-            self.error.emit(f"Music listening stopped: {e}")
+            # usually the playback device changed: reconnect to the new default speaker
+            log.info("Music listener reconnecting (%s)", e)
+            if self.playing:
+                self.playing = False
+                self.playing_changed.emit(False)
+            return True
+        return True
 
     def clip_wav(self, seconds: float = 8.0) -> bytes | None:
         with self._clip_lock:
