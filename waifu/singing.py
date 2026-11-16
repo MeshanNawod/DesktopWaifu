@@ -194,22 +194,52 @@ class Singer(QObject):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._queue: list[Segment] = []
+        self._pool = None              # vocal-fold cycles from the hum recording (built on first use)
         self._cur: Segment | None = None
         self._gen = 0
         self.singing = False
         self._t0 = 0.0
 
     # ------------------------------------------------------------------ building a song
-    def sing(self, kind: str = "song", user: str = "") -> None:
-        """kind: 'hum' (just a hummed tune) or 'song' (hums + sung lines)."""
+    def sing(self, kind: str = "song", user: str = "", tune: list | None = None, label: str = "") -> None:
+        """kind: 'hum' (just a hummed tune) or 'song' (hums + sung lines).
+        tune: a melody she learned from your music [(midi, seconds)] -- she hums it, then "la la"s it."""
         self.stop()
         self._gen += 1
         gen = self._gen
         cfg = self.cfg
         rng = random.Random(time.time())
 
+        from . import humvoice as hv
+        ref = hv.load_reference()                                   # a real person humming (if you gave one)
+        if ref is not None and self._pool is None:
+            try:
+                self._pool = hv.reference_grains(ref)
+            except Exception:
+                self._pool = []
+        pool = self._pool if ref is not None else None
+        voice_a = hv.load_sample(cfg.tts_voice, cfg.tts_pitch, "a")  # her own voice, "aah"
+        voice_m = hv.load_sample(cfg.tts_voice, cfg.tts_pitch, "m")  # her own voice, "mmm"
+        nprng = np.random.default_rng(rng.randrange(1 << 30))
+
+        def render(notes, vowel: str):
+            """Most human first: the real hum recording, then her own voice re-pitched, then the synth."""
+            try:
+                if vowel in "mn" and pool:
+                    return hv.psola_sing(pool, notes, "m", rng.randrange(1 << 30))
+                if vowel in "au" and voice_a is not None:
+                    return hv.psola_sing(voice_a, notes, "a", rng.randrange(1 << 30))
+                if voice_m is not None:
+                    return hv.psola_sing(voice_m, notes, "m", rng.randrange(1 << 30))
+            except Exception as e:
+                log.info("human hum failed (%s), using the synth", e)
+            return synth_phrase(notes, vowel, rng.randrange(1 << 30))
+
         def hum(vowel: str, notes: int) -> Segment:
-            x = synth_phrase(make_melody(rng, notes), vowel, rng.randrange(1 << 30))
+            if vowel in "mn" and ref is not None:
+                x = hv.natural_hum(ref, nprng)                     # just the real hum, a little varied
+            else:
+                x = render(make_melody(rng, notes), vowel)
             path = CACHE_DIR / f"sing_{uuid.uuid4().hex}.wav"
             path.write_bytes(wav_bytes(x))
             step = int(SR * 0.02)
@@ -231,8 +261,23 @@ class Singer(QObject):
                 log.info("Singing voice unavailable (%s); humming instead", e)
                 return None
 
+        def hum_tune(vowel: str) -> Segment:
+            from .tunes import fit_to_voice
+            notes = fit_to_voice([(int(m), float(d)) for m, d in tune], 64 if pool else 66)
+            x = render(notes, vowel)
+            path = CACHE_DIR / f"sing_{uuid.uuid4().hex}.wav"
+            path.write_bytes(wav_bytes(x))
+            step = int(SR * 0.02)
+            env = [float(np.abs(x[i:i + step]).mean()) for i in range(0, len(x), step)]
+            peak = max(env) or 1.0
+            text = label or "Hmm hmm~ ♪"
+            return Segment(path, text if vowel == "m" else "La la la~ ♪", [(0.25 if vowel == "m" else 0.85) * v / peak
+                                                                           for v in env])
+
         def work() -> list[Segment]:
-            segs = [hum(rng.choice("mmu"), rng.randint(7, 11))]
+            if tune:
+                return [hum_tune("m"), hum_tune(rng.choice("au"))] + ([hum_tune("m")] if rng.random() < 0.5 else [])
+            segs = [hum("m" if ref is not None else rng.choice("mmu"), rng.randint(7, 11))]
             if kind == "song":
                 lyrics = list(rng.choice(SONGS))
                 if user and rng.random() < 0.4:
@@ -244,7 +289,7 @@ class Singer(QObject):
                         segs.append(s)
                     segs.append(hum(rng.choice("aun" if i == 0 else "m"), rng.randint(6, 9)))
             else:
-                segs.append(hum(rng.choice("mau"), rng.randint(8, 12)))
+                segs.append(hum("m" if ref is not None and rng.random() < 0.6 else rng.choice("au"), rng.randint(8, 12)))
             return segs
 
         def ready(segs: list[Segment]) -> None:

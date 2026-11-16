@@ -21,6 +21,9 @@ from .companions import LABELS as COMPANION_LABELS, NAMES as COMPANION_NAMES, PE
 from .emotion import ANGRY, AWAKE, HAPPY, HURT, LISTENING, SLEEPING, EmotionEngine
 from .poses import HELD as HELD_POSES, parse_command, pop_pose_tag
 from .singing import HUMS, VOICE_PRESETS, Singer
+from .tunes import TuneMemory, analyze_mood, extract_melody
+from .wellbeing import Wellbeing, describe as describe_time, parse_reminder
+from .config import APP_DIR
 from .database import Memory
 from .music import MusicListener, now_playing
 from .reactions import line
@@ -98,6 +101,19 @@ class WaifuApp(QObject):
         self.camera = CameraWatcher(self.cfg.webcam_index)
         self.music = MusicListener()
         self.singer = Singer(self.cfg)
+        self.tunes = TuneMemory(APP_DIR / "tunes.json", persist=self.cfg.can("memory"))
+        from . import humvoice
+        self.humvoice = humvoice.HumVoice()
+        humvoice.prepare_reference(self)                   # your hum recording -> her humming voice
+        if self.cfg.can("cloud") and self.cfg.tts_engine == "edge":
+            QTimer.singleShot(8000, lambda: self.humvoice.prepare(self.cfg.tts_voice, self.cfg.tts_pitch))
+        self._music_t0 = 0.0
+        self._last_learn = 0.0
+        self._last_mood_t = 0.0
+        self._song_mood = ""
+        self._earworm_at = 0.0
+        self.well = Wellbeing(self.cfg)
+        self._next_work_comment = 0.0
         self.memory.private = not self.cfg.can("memory")
         self.fg.enabled = self.cfg.can("titles")
         self._next_song = time.monotonic() + 120
@@ -217,6 +233,24 @@ class WaifuApp(QObject):
         m = REMEMBER_RE.match(text)
         if m:
             self.brain.remember(m.group(1).strip())
+        r = parse_reminder(text)
+        if r:
+            self.cfg.reminders.append(r)
+            self.cfg.save()
+            self.say(f"Okay! I'll remind you {describe_time(r['at'])} to {r['text']}"
+                     + (" — every day!" if r["repeat"] else "~"), "happy")
+            return
+        if re.search(r"\b(watch|see) (me|my) (work|working|code|coding)\b", low):
+            self._toggle("watch_work", True)
+            self.say(line("watch_on"), "happy")
+            return
+        if re.search(r"\b(stop|don'?t) (watching|peeking|looking at my work)\b", low):
+            self._toggle("watch_work", False)
+            self.say(line("watch_off"), "pout")
+            return
+        if re.search(r"\b(tea|break) (with me|time)\b|\blet'?s (have|drink) tea\b", low):
+            self.tea_break()
+            return
         cmd = parse_command(text)
         if cmd and self.do_command(cmd):
             return
@@ -245,6 +279,94 @@ class WaifuApp(QObject):
         if hasattr(self, "play") and random.random() < 0.5:
             self.play.party_t = 8.0                       # the pets bop along
 
+    # ----------------------------------------------------------------- looking after you
+    def _care_tick(self, idle: float) -> None:
+        c = self.character
+        for kind, data in self.well.tick(5.0, idle):
+            if kind == "reminder":
+                self._remind(data)
+            elif self.emotion.state == SLEEPING or self.chat.isVisible() and kind not in ("watch", "unwatch"):
+                continue
+            elif kind == "break":
+                self._last_quip = 0.0
+                self._quip("break", "happy")
+                if hasattr(c.sprites, "start_gesture"):
+                    c.sprites.start_gesture("stretch")
+                QTimer.singleShot(5000, lambda: self.play.start_activity("tea"))
+            elif kind in ("water", "eyes", "night", "welcome_break"):
+                self._last_quip = 0.0
+                self._quip(kind, {"night": "sleepy", "eyes": "shy"}.get(kind, "happy"))
+                if kind == "water":
+                    c.hold("tea", 6.0)
+                if kind == "welcome_break":
+                    self.well.took_break()
+            elif kind == "tea":
+                self.tea_break()
+            elif kind == "watch":
+                c.watching = data
+                self._next_work_comment = time.monotonic() + random.uniform(150, 300)
+                self._last_quip = 0.0
+                self._quip(f"watch_{data}", "happy", chance=0.8)
+            elif kind == "unwatch":
+                c.watching = ""
+        if c.watching and time.monotonic() > self._next_work_comment and not self.brain.busy:
+            self._next_work_comment = time.monotonic() + random.uniform(240, 480)
+            self._quip(f"help_{c.watching}", "thinking" if c.watching == "coding" else "happy", chance=0.7)
+
+    def _remind(self, r: dict) -> None:
+        c = self.character
+        name = self.cfg.user_name or ""
+        msg = f"⏰ {name + ', ' if name else ''}it's time to {r['text']}!"
+        if self.emotion.state == SLEEPING:
+            self.emotion.wake(gentle=True)
+        self._last_quip = 0.0
+        self.say(msg, "excited")
+        if hasattr(self, "tray"):
+            self.tray.showMessage(f"{self.cfg.name} reminds you", f"Time to {r['text']}", self.tray.icon(), 15000)
+        c.walk_to_cursor()
+        QTimer.singleShot(1500, lambda: c.do_cute("wave"))
+
+    def tea_break(self) -> None:
+        self._last_quip = 0.0
+        self._quip("tea_invite", "happy")
+        self.well.took_break()
+        QTimer.singleShot(1200, lambda: self.play.start_activity("tea", force=True))
+
+    def add_reminder_dialog(self) -> None:
+        from PySide6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(None, "New reminder", "What should I remind you about?\n"
+                                        "e.g.  at 5:30 pm to call mom  ·  in 20 minutes to stretch  ·  every day at 8am to "
+                                        "take my medicine")
+        if ok and text.strip():
+            t = text.strip()
+            r = parse_reminder(t if t.lower().startswith("remind") else "remind me " + t)
+            if r:
+                self.cfg.reminders.append(r)
+                self.cfg.save()
+                self.say(f"Got it! I'll remind you {describe_time(r['at'])} to {r['text']}~", "happy", speak=False)
+            else:
+                self.say("Hmm, I didn't catch the time... try 'at 5pm to ...' or 'in 10 minutes to ...'", "thinking",
+                         speak=False)
+
+    def _hum_learned(self, earworm: bool = False) -> bool:
+        """Hum a melody she picked up from your music."""
+        c = self.character
+        if (self.singer.singing or self.speaker.speaking or self.brain.busy or self.music.playing
+                or self.emotion.state not in (AWAKE, HAPPY) or c.ctx.angry > 0.3):
+            return False
+        t = self.tunes.pick()
+        if t is None:
+            return False
+        name = t.get("title", "")
+        short = (name.split(" - ")[0][:28] + "…") if len(name) > 30 else name
+        label = f"Hmm hmm~ ♪ ({short})" if short else "Hmm hmm~ ♪ (that song you played~)"
+        self.speaker.stop()
+        self._next_song = time.monotonic() + max(1.0, self.cfg.sing_minutes) * 60 * random.uniform(0.7, 1.4)
+        self.bubble.follow(c.head_anchor())
+        self.bubble.say("That song is stuck in my head~ ♪" if earworm else label, 3)
+        self.singer.sing("hum", self.cfg.user_name, tune=t["notes"], label=label)
+        return True
+
     def _maybe_sing(self) -> None:
         c = self.character
         if not self.cfg.sing_randomly or self.singer.singing or time.monotonic() < self._next_song:
@@ -253,6 +375,8 @@ class WaifuApp(QObject):
                 or self.brain.busy or self.mic.recording or self.music.playing or c.state not in ("idle", "sit", "walk")
                 or c.ctx.angry > 0.3):
             self._next_song = time.monotonic() + 45
+            return
+        if self.tunes.tunes and self.cfg.learn_tunes and random.random() < 0.55 and self._hum_learned():
             return
         self.sing(random.choice(["hum", "song", "song"]))
 
@@ -276,6 +400,8 @@ class WaifuApp(QObject):
         self.cfg.voice_preset, self.cfg.tts_engine = key, "edge"
         self.cfg.tts_voice, self.cfg.tts_rate, self.cfg.tts_pitch = voice, rate, pitch
         self.cfg.save()
+        if self.cfg.can("cloud"):
+            self.humvoice.prepare(voice, pitch)
         self.speaker.stop()
         was = self.cfg.tts_enabled
         self.cfg.tts_enabled = True                       # let her say something so you can hear it
@@ -324,6 +450,13 @@ class WaifuApp(QObject):
         return True
 
     def on_reply(self, text: str, emotion: str) -> None:
+        m = re.search(r"\[mood:(\w+)\]", text, re.I)
+        if m:
+            text = (text[:m.start()] + text[m.end():]).strip()
+            mood = m.group(1).lower()
+            if mood in ("energetic", "happy", "calm", "sad", "intense") and self.music.playing:
+                self._song_mood = ""
+                self._on_song_mood({"mood": mood, "bpm": self.music.bpm})
         text, pose = pop_pose_tag(text)
         if pose:
             self.do_command(pose, quiet=True)
@@ -618,10 +751,75 @@ class WaifuApp(QObject):
         self.emotion.set_music(playing)
         self.character.set_music(playing)
         if playing:
+            self._music_t0 = time.monotonic()
+            self._song_mood = ""
+            if self.singer.singing:
+                self.singer.stop()
             if self.emotion.state != SLEEPING:
+                QTimer.singleShot(6000, self._feel_the_song)
                 QTimer.singleShot(2000, self._comment_on_music)
         else:
+            self.character.ctx.groove = ""
             self._quip("music_stop", "neutral", chance=0.3)
+            if self.tunes.tunes and self.cfg.learn_tunes and random.random() < 0.85:
+                self._earworm_at = time.monotonic() + random.uniform(12, 45)   # the song is stuck in her head
+
+    # ----------------------------------------------------------------- feeling the music (local analysis)
+    def _clip_pcm(self, seconds: float = 10.0):
+        import numpy as np
+        wav = self.music.clip_wav(seconds)
+        if not wav:
+            return None
+        return np.frombuffer(wav[44:], dtype=np.int16)
+
+    def _feel_the_song(self) -> None:
+        """Work out the song's mood from the sound (on this PC) and dance / react to match."""
+        if not self.music.playing or not self.cfg.can("music"):
+            return
+        pcm = self._clip_pcm(10)
+        if pcm is None:
+            return
+        bpm = self.music.bpm
+        run_async(lambda: analyze_mood(pcm, bpm), self._on_song_mood, lambda m: log.info("mood failed: %s", m))
+
+    def _on_song_mood(self, info: dict) -> None:
+        mood = info.get("mood", "happy")
+        c = self.character
+        c.bpm = info.get("bpm") or self.music.bpm
+        first = not self._song_mood
+        if mood == self._song_mood and not first:
+            return
+        self._song_mood = mood
+        self._last_mood_t = time.monotonic()
+        c.ctx.groove = mood
+        c.set_emotion({"energetic": "excited", "happy": "happy", "calm": "shy", "sad": "sad",
+                       "intense": "excited"}[mood], 12.0)
+        if mood == "energetic" and hasattr(self, "play"):
+            self.play.party_t = 10.0                         # the pets join in
+        if not self.brain.busy and (not self.cfg.can("cloud") or not self.cfg.can("titles") or not first
+                                    or not self.cfg.effective_api_key()):
+            self._last_quip = 0.0
+            self._quip(f"song_{mood}", None, chance=0.8)
+
+    def _maybe_learn_tune(self) -> None:
+        if not (self.music.playing and self.cfg.learn_tunes and self.cfg.can("music")):
+            return
+        now = time.monotonic()
+        if now - self._music_t0 < 12 or now - self._last_learn < 25:
+            return
+        self._last_learn = now
+        pcm = self._clip_pcm(10)
+        if pcm is None:
+            return
+        title = (now_playing() or "") if self.cfg.can("titles") else ""
+        key = title or f"song@{int(self._music_t0)}"
+        bpm = self.music.bpm
+
+        def done(res):
+            notes, q = res
+            if notes and q > 0.12 and self.tunes.learn(key, title, notes, q, bpm):
+                log.info("Learned a tune (%d notes, quality %.2f)", len(notes), q)
+        run_async(lambda: extract_melody(pcm, 16000), done, lambda m: log.info("tune failed: %s", m))
 
     def _comment_on_music(self, changed: bool = False) -> None:
         if not self.music.playing or self.emotion.state in (SLEEPING, HURT):
@@ -641,7 +839,9 @@ class WaifuApp(QObject):
             hear = " A short clip of it is attached so you can hear it." if clip else ""
             bpm = f" It's around {self.music.bpm:.0f} BPM." if self.music.bpm else ""
             self.brain.ask(f"(Music: {user} {'switched to' if changed else 'is playing'} {what} and you're listening "
-                           f"together.{bpm}{hear} Share a short, genuine reaction or ask them about it.)",
+                           f"together.{bpm}{hear} Think about what this song is about and how it makes you feel, then "
+                           "share a short, genuine reaction in your own words (never quote lyrics). After the emotion "
+                           "tag add [mood:NAME] with NAME one of energetic, happy, calm, sad, intense.)",
                            audio=clip, event=True)
         else:
             self._quip("music_start", "happy")
@@ -666,6 +866,15 @@ class WaifuApp(QObject):
                 self._comment_on_music(changed=True)
         if self._life_n % 30 == 0:
             self._maybe_initiate(idle)
+        if self._life_n % 5 == 0:
+            self._care_tick(idle)
+        self._maybe_learn_tune()
+        if self.music.playing and time.monotonic() - self._last_mood_t > 40 and self._song_mood:
+            self._last_mood_t = time.monotonic()
+            self._feel_the_song()
+        if self._earworm_at and time.monotonic() > self._earworm_at and not self.music.playing:
+            self._earworm_at = 0.0
+            self._hum_learned(earworm=True)
         self._maybe_sing()
         if self._life_n % 300 == 0 and idle < 120:      # learn when you're usually at the PC
             self.memory.bump(f"active_h{datetime.now().hour}")
@@ -761,7 +970,7 @@ class WaifuApp(QObject):
         self.chat.set_name(self.cfg.name)
         self.character.apply_config()
         self._apply_senses()
-        self.tray.setIcon(QIcon(self.character.sprites.icon()))
+        self.tray.setIcon(_app_icon())
         self.say("Settings saved!", "happy", speak=False)
 
     def _first_run(self) -> None:
@@ -844,6 +1053,12 @@ class WaifuApp(QObject):
         sing = m.addMenu("🎵 Sing & voice")
         sing.addAction("🎤 Sing a song", lambda: self.sing("song"))
         sing.addAction("🎶 Hum a tune", lambda: self.sing("hum"))
+        if self.tunes.tunes:
+            sing.addAction(f"🎧 Hum a song you heard ({len(self.tunes.tunes)} learned)",
+                           lambda: self._hum_learned() or self.say("Hang on~", "thinking", speak=False))
+        lt = QAction("Learn the tunes of my music", sing, checkable=True, checked=self.cfg.learn_tunes)
+        lt.toggled.connect(lambda on: self._toggle("learn_tunes", on))
+        sing.addAction(lt)
         if self.singer.singing:
             sing.addAction("⏹ Stop singing", self.singer.stop)
         act = QAction("Sing and hum on her own", sing, checkable=True, checked=self.cfg.sing_randomly)
@@ -854,11 +1069,27 @@ class WaifuApp(QObject):
             a = QAction("🎀 " + lbl, sing, checkable=True, checked=self.cfg.voice_preset == key)
             a.triggered.connect(lambda _=False, k=key: self.set_voice(k))
             sing.addAction(a)
+        care = m.addMenu("🩺 Care & reminders")
+        care.addAction("⏰ Add a reminder…", self.add_reminder_dialog)
+        for r in sorted(self.cfg.reminders, key=lambda r: r["at"])[:10]:
+            sub = care.addMenu(f"   {describe_time(r['at'])}: {r['text'][:40]}" + (" (daily)" if r.get("repeat") else ""))
+            sub.addAction("✕ Delete", lambda rr=r: (self.cfg.reminders.remove(rr), self.cfg.save()))
+        care.addSeparator()
+        care.addAction("☕ Tea break with her", self.tea_break)
+        for label, attr in (("Remind me to take breaks, drink water, rest my eyes", "health_reminders"),
+                            ("Watch me work (coding / heavy work) — program names only", "watch_work")):
+            a = QAction(label, care, checkable=True, checked=getattr(self.cfg, attr))
+            a.toggled.connect(lambda on, at=attr: self._toggle(at, on))
+            care.addAction(a)
         priv = m.addMenu("🔒 Privacy")
         lock = QAction("🔒 Privacy mode: she won't look at or listen to anything", priv, checkable=True,
                        checked=self.cfg.privacy_mode)
         lock.toggled.connect(self.set_privacy)
         priv.addAction(lock)
+        mp = QAction("Privacy mode still lets her hear my music (stays on this PC)", priv, checkable=True,
+                     checked=self.cfg.music_in_privacy)
+        mp.toggled.connect(lambda on: (self._toggle("music_in_privacy", on), on and self._toggle("music_enabled", True)))
+        priv.addAction(mp)
         priv.addSeparator()
         for label, attr in (("Look at my screen (screenshots)", "allow_screen"),
                             ("Read window titles (apps, song names)", "allow_window_titles"),
@@ -873,7 +1104,7 @@ class WaifuApp(QObject):
             a.toggled.connect(lambda on, at=attr: self._toggle(at, on))
             priv.addAction(a)
         priv.addSeparator()
-        priv.addAction("🧹 Forget everything about me", lambda: (self.brain.clear_memory(),
+        priv.addAction("🧹 Forget everything about me", lambda: (self.brain.clear_memory(), self.tunes.forget(),
                        self.say("...Okay. Everything's forgotten. Nice to meet you~?", "shy", speak=False)))
         m.addSeparator()
         for label, attr in (("Voice replies", "tts_enabled"), ("Let her see me (webcam)", "webcam_enabled"),
@@ -895,7 +1126,7 @@ class WaifuApp(QObject):
             self.cfg.vrm_path = path
         self.cfg.save()
         self.character.apply_config()
-        self.tray.setIcon(QIcon(self.character.sprites.icon()))
+        self.tray.setIcon(_app_icon())
         self._follow()
         self.say("Ta-da! How do I look?", "happy")
 
@@ -913,7 +1144,7 @@ class WaifuApp(QObject):
         self._ctx_menu.popup(pos)
 
     def _build_tray(self) -> None:
-        self.tray = QSystemTrayIcon(QIcon(self.character.sprites.icon()), self)
+        self.tray = QSystemTrayIcon(_app_icon(), self)
         self._tray_menu = QMenu()
         self._tray_menu.aboutToShow.connect(self._refresh_tray_menu)
         self.tray.setContextMenu(self._tray_menu)
@@ -944,9 +1175,21 @@ class WaifuApp(QObject):
         self.qapp.quit()
 
 
+def _app_icon() -> QIcon:
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "assets" / "icon.png"
+    return QIcon(str(p)) if p.exists() else QIcon()
+
+
 def run(argv: list[str]) -> int:
     app = QApplication(argv)
     app.setApplicationName("DesktopWaifu")
+    app.setWindowIcon(_app_icon())
+    try:                                       # own taskbar identity (so Windows shows her icon, not Python's)
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("MeshanNawod.DesktopWaifu")
+    except Exception:
+        pass
     app.setQuitOnLastWindowClosed(False)
     w = WaifuApp(app)  # noqa: F841  (keep a reference)
     return app.exec()

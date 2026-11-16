@@ -96,12 +96,22 @@ class Config:
     plants: list = field(default_factory=list)            # her garden on the taskbar
     garden_minutes: float = 30.0           # how long a flower takes to bloom
 
+    # Looking after you
+    reminders: list = field(default_factory=list)         # [{"at": epoch, "text": str, "repeat": "" | "daily"}]
+    health_reminders: bool = True          # breaks, water, eye rest, bedtime
+    break_minutes: float = 50.0
+    water_minutes: float = 75.0
+    eye_minutes: float = 40.0
+    watch_work: bool = False               # she peers at your work when you code / do heavy work (program names only)
+
     # Privacy
     privacy_mode: bool = False             # master lock: no screen, window titles, webcam, mic or system audio
     allow_screen: bool = True              # screenshots ("look at my screen" + automatic glances)
     allow_window_titles: bool = True       # reading window titles (what you're using, song names)
     remember_chats: bool = True            # save chats, learn facts and habits about you
     local_only: bool = False               # never send anything to the cloud (needs a downloaded local model)
+    music_in_privacy: bool = False         # privacy mode still lets her hear your music (analysed on this PC only)
+    learn_tunes: bool = True               # pick up the melodies of songs you play and hum them later
 
     # Singing
     sing_randomly: bool = True             # she hums / sings to herself now and then
@@ -112,7 +122,8 @@ class Config:
         """May she use this source of your data? what: screen | titles | webcam | mic | music | music_audio |
         memory | cloud. The privacy-mode master lock turns off every sense that looks at or listens to your PC."""
         if self.privacy_mode and what in ("screen", "titles", "webcam", "mic", "music", "music_audio"):
-            return False
+            if not (what == "music" and self.music_in_privacy and self.music_enabled):
+                return False
         return {"screen": self.allow_screen, "titles": self.allow_window_titles, "webcam": self.webcam_enabled,
                 "mic": self.wake_by_voice, "music": self.music_enabled, "music_audio": self.music_send_audio,
                 "memory": self.remember_chats, "cloud": not self.local_only}.get(what, True)

@@ -151,6 +151,7 @@ class CharacterWindow(QWidget):
         self._suppress_menu = False
         self._pose_left = 0.0
         self._jump_prep: tuple[float, float] | None = None
+        self.watching = ""           # coding / working: she peers at your screen
         self.singing = False
         self.music_on = False
         self._shake = 0.0            # how hard she's been shaken (decays)
@@ -345,6 +346,22 @@ class CharacterWindow(QWidget):
         ctx.angry += ((1.0 if self.angry_on else 0.0) - ctx.angry) * min(1.0, dt * 3)
         ctx.lie += ((1.0 if ctx.pose == "lie" and self.state in (IDLE, REACT, PET) else 0.0) - ctx.lie) * min(1.0, dt * 4)
         self._update_sick(dt)
+        # dancing to your music: a beat clock, and a groove that matches the song's mood
+        self.ctx.beat_ph += dt * max(60.0, min(180.0, getattr(self, "bpm", 0.0) or 110.0)) / 60.0 * math.tau
+        grooving = (self.music_on and not self.singing and self.ctx.groove and not self.user_pose
+                    and not ctx.holding and self.state in (IDLE, REACT, PET) and ctx.angry < 0.3
+                    and getattr(ctx, "sick", 0.0) < 0.3)
+        peering = (self.watching and not grooving and not self.user_pose and not ctx.holding
+                   and self.state in (IDLE, REACT, PET) and ctx.angry < 0.3 and not getattr(self, "in_activity", False))
+        if peering and (not ctx.pose or ctx.pose.startswith("peer_")):
+            scr = QGuiApplication.screenAt(self.global_rect().center()) or QGuiApplication.primaryScreen()
+            ctx.pose = "peer_l" if scr.availableGeometry().center().x() > self.px + self.width() / 2 else "peer_r"
+        elif ctx.pose.startswith("peer_") and not peering:
+            ctx.pose = ""
+        if grooving and (not ctx.pose or ctx.pose.startswith("groove_") or ctx.pose.startswith("peer_")):
+            ctx.pose = f"groove_{self.ctx.groove}"
+        elif ctx.pose.startswith("groove_") and not grooving:
+            ctx.pose = ""
         if self._jump_prep is not None:                 # crouch... then spring up
             left_t, power = self._jump_prep
             left_t -= dt
@@ -440,6 +457,9 @@ class CharacterWindow(QWidget):
         if hasattr(self.sprites, "step"):
             self.sprites.step(dt, self._acc[0], self._acc[1], wvx, wvy, self.state, ctx)
             cur = QPointF(self.mapFromGlobal(QCursor.pos()))
+            if ctx.pose.startswith("peer_"):              # she looks at your work, not the cursor
+                scr = QGuiApplication.screenAt(self.global_rect().center()) or QGuiApplication.primaryScreen()
+                cur = QPointF(self.mapFromGlobal(scr.availableGeometry().center()))
             near = (cur - QPointF(self.width() / 2, self.height() / 3)).manhattanLength() < 1400
             self.sprites.look_at(cur if near and self.state != SLEEP else None)
 
@@ -1189,6 +1209,9 @@ class CharacterWindow(QWidget):
 
     def set_music(self, on: bool, beat: float = 0.0) -> None:
         self.music_on = on
+        if beat > 0.3:                                    # a beat just hit: pull the dance clock onto it
+            ph = self.ctx.beat_ph % math.tau
+            self.ctx.beat_ph -= (ph if ph < math.pi else ph - math.tau) * 0.35
         on = on or self.singing
         self.ctx.music = on
         self.ctx.beat = max(self.ctx.beat, beat)

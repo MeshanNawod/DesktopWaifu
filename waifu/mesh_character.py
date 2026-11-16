@@ -426,6 +426,17 @@ class MeshCharacter:
                     self._gesture = None
             elif state in (DRAG, FALL):
                 goal[:] = math.radians(25) + math.sin(t * 9) * 0.15
+            elif ctx.pose.startswith("groove_"):             # dancing to your song
+                style, ph = ctx.pose[7:], ctx.beat_ph
+                if style in ("energetic", "happy"):
+                    goal[0] = self.arm_rest - (1.6 if math.sin(ph / 2) > 0 else 0.2)       # arms up on alternate beats
+                    goal[1] = self.arm_rest - (1.6 if math.sin(ph / 2) < 0 else 0.2)
+                elif style == "intense":
+                    goal[:] = self.arm_rest - 0.6 - abs(math.sin(ph)) * 0.5
+                elif style == "sad":
+                    goal[:] = self.arm_rest + 0.1
+                else:
+                    goal += np.array([1, -1]) * math.sin(ph / 2) * 0.15
             elif ctx.music:
                 goal += np.array([1, -1]) * math.sin(t * 2.2) * 0.12 - ctx.beat * 0.15
             elif state == PET:
@@ -458,6 +469,11 @@ class MeshCharacter:
             hop = abs(math.sin(t * 7.0)) * 0.012 * self.m.height
         if state == REACT:
             hop = max(0.0, math.sin(min(1.0, ctx.state_t / 0.35) * math.pi)) * 0.03 * self.m.height
+        if ctx.pose.startswith("groove_"):
+            style, ph = ctx.pose[7:], ctx.beat_ph
+            amp = {"energetic": 0.03, "happy": 0.018, "intense": 0.022, "calm": 0.0, "sad": 0.0}.get(style, 0.01)
+            hop += abs(math.sin(ph)) * amp * self.m.height
+            self.yaw += (math.sin(ph / 2) * (6 if style in ("calm", "sad") else 14) - 0) * min(1.0, dt * 4) * 0.5
         tilt = -ctx.tilt * 0.5 if state == DRAG and not ctx.grab else 0.0
         if ctx.grab:
             self.yaw *= max(0.0, 1 - dt * 6)

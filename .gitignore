@@ -17,3 +17,6 @@ config.json
 Thumbs.db
 .vscode/
 .idea/
+
+# your own hum recording / samples (not ours to redistribute)
+docs/hum_sample.wav

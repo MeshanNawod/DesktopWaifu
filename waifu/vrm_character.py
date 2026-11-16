@@ -129,7 +129,7 @@ def hold_pose(name: str, t: float) -> dict[str, np.ndarray]:
     return {}
 
 
-def body_pose(name: str, t: float, add, P: dict) -> tuple[float, str | None]:
+def body_pose(name: str, t: float, add, P: dict, beat: float = 0.0) -> tuple[float, str | None]:
     """Held poses you can ask for. Fills P; returns (how far to drop the hips 0..1 of hip height, leg mode)."""
     def arms(lu, ll, ru=None, rl=None):
         P["leftUpperArm"], P["leftLowerArm"] = lu, ll
@@ -222,7 +222,20 @@ def body_pose(name: str, t: float, add, P: dict) -> tuple[float, str | None]:
             add(f"{side}UpperLeg", _rx(-bend * 0.6))
             add(f"{side}LowerLeg", _rx(bend))
         return 0.03 * abs(math.sin(ph * 2)), None
+    if name.startswith("groove_"):
+        return groove_pose(name[7:], t, beat, add, P)
     base, _, sd = name.rpartition("_")
+    if base == "peer" and sd in ("l", "r"):    # squinting at your screen, hand shading her eyes, leaning in
+        s = 1 if sd == "l" else -1
+        side, other = ("left", "right") if s > 0 else ("right", "left")
+        P.update({f"{side}UpperArm": q_mul(_rx(-52), _rz(s * 18)), f"{side}LowerArm": q_mul(_ry(s * -70), _rz(s * 98)),
+                  f"{side}Hand": _rx(12),
+                  f"{other}UpperArm": q_mul(_rx(-20), _rz(-s * -76)), f"{other}LowerArm": _ry(-s * -82)})
+        nod = max(0.0, math.sin(t * 0.7)) ** 8 * 6           # an occasional little nod
+        add("spine", _rx(12))
+        add("neck", _rx(-6))
+        add("head", q_mul(_rx(-8 + nod), _rz(s * 6)))
+        return 0.0, None
     if base in ("eww", "spray", "mop") and sd in ("l", "r"):
         s = 1 if sd == "l" else -1
         side, other = ("left", "right") if s > 0 else ("right", "left")
@@ -305,6 +318,60 @@ def body_pose(name: str, t: float, add, P: dict) -> tuple[float, str | None]:
         add("head", _rx(-28))
         return 0.0, None
     return 0.0, None
+
+
+def groove_pose(style: str, t: float, ph: float, add, P: dict) -> tuple[float, str | None]:
+    """Dancing on the beat (ph = beat phase, one turn per beat), in a style that matches the song's mood."""
+    s1, c1 = math.sin(ph), math.cos(ph)
+    s2 = math.sin(ph / 2)                 # every other beat: left / right
+    bounce = (1 - c1) * 0.5               # 0 on the beat ... 1 between beats
+    if style == "energetic":              # bouncy knees, fist pumps, twisting
+        up = max(0.0, s2)
+        P.update({"leftUpperArm": q_mul(_rx(-30), _rz(20 + 70 * up)), "rightUpperArm": q_mul(_rx(-30), _rz(-20 - 70 * max(0.0, -s2))),
+                  "leftLowerArm": _ry(-60 + 30 * up), "rightLowerArm": _ry(60 - 30 * max(0.0, -s2))})
+        for leg, sgn in (("left", 1), ("right", -1)):
+            add(f"{leg}UpperLeg", _rx(-14 * (1 - bounce)))
+            add(f"{leg}LowerLeg", _rx(26 * (1 - bounce)))
+        add("spine", _ry(s2 * 14))
+        add("head", _rx(-c1 * 7))
+        return 0.05 * (1 - bounce), None
+    if style == "intense":                # head-bob + air guitar
+        strum = math.sin(ph * 2)
+        P.update({"leftUpperArm": q_mul(_rx(-50), _rz(-35)), "leftLowerArm": q_mul(_ry(-70), _rz(-10)),
+                  "rightUpperArm": q_mul(_rx(-25), _rz(55)), "rightLowerArm": q_mul(_ry(55 + strum * 25), _rz(10))})
+        add("head", _rx(abs(s1) * 20 - 4))
+        add("spine", _rx(abs(s1) * 6))
+        for leg, sgn in (("left", 1), ("right", -1)):
+            add(f"{leg}UpperLeg", q_mul(_rx(-10 * abs(s1)), _rz(sgn * -8)))
+            add(f"{leg}LowerLeg", _rx(18 * abs(s1)))
+        return 0.03 * abs(s1), None
+    if style == "calm":                   # slow sway over two beats, hands together, head tilted
+        sway = math.sin(ph / 2)
+        P.update(gesture_pose("shy_hands", t))
+        add("hips", _rz(sway * 5))
+        add("spine", _rz(-sway * 4))
+        add("head", q_mul(_rz(sway * 8 + 6), _rx(6)))
+        return 0.0, None
+    if style == "sad":                    # hugging herself, head down, the smallest sway
+        sway = math.sin(ph / 2)
+        P.update(_arm_pair(-42, -30, -66, -142, -22))
+        add("head", q_mul(_rx(16), _rz(sway * 4)))
+        add("spine", q_mul(_rx(6), _rz(sway * 2)))
+        add("leftShoulder", _rz(-5))
+        add("rightShoulder", _rz(5))
+        return 0.0, None
+    # happy: side-to-side steps, arms swinging out, a little hop on the beat
+    P.update({"leftUpperArm": q_mul(_rx(-15), _rz(-40 + 35 * max(0.0, s2))),
+              "rightUpperArm": q_mul(_rx(-15), _rz(40 - 35 * max(0.0, -s2))),
+              "leftLowerArm": _rz(25 + 15 * s1), "rightLowerArm": _rz(-25 + 15 * s1)})
+    add("hips", _rz(s2 * 8))
+    add("spine", _rz(-s2 * 6))
+    add("head", _rz(s2 * 8))
+    for leg, sgn in (("left", 1), ("right", -1)):
+        lift = max(0.0, sgn * s2)
+        add(f"{leg}UpperLeg", _rx(-22 * lift))
+        add(f"{leg}LowerLeg", _rx(40 * lift))
+    return 0.025 * bounce, None
 
 
 def gesture_for(face: str, emotion: str) -> str:
@@ -719,7 +786,7 @@ class VrmCharacter:
             P["rightUpperArm"] = q_mul(_rx(-18), P["rightUpperArm"])
 
         # music: bob the head on the beat, sway the hips
-        if ctx.music and state in (IDLE, REACT, SIT, PET):
+        if ctx.music and state in (IDLE, REACT, SIT, PET) and not ctx.pose.startswith("groove_"):
             b = ctx.beat
             add("head", _rx(b * 9 - 2))
             add("neck", _rz(math.sin(t * 2.2) * 5))
@@ -752,7 +819,7 @@ class VrmCharacter:
         elif self.gesture and state in (IDLE, REACT, PET, SIT):
             self._blend_gesture(P)
         if ctx.pose and state in (IDLE, REACT, PET):
-            drop, _legs = body_pose(ctx.pose, t, add, P)
+            drop, _legs = body_pose(ctx.pose, t, add, P, ctx.beat_ph)
             if drop:
                 hips = self.m.bone_pos(self.m.rest_world, "hips")
                 hh = (hips[1] - self.m.min_y) if hips is not None else 0.5 * self.m.height
@@ -1135,6 +1202,8 @@ class VrmCharacter:
             tgt["blink"] = max(tgt.get("blink", 0.0), 1.0 - block)
         if self.expr_bias > 0:
             tgt["blink"] = max(tgt.get("blink", 0.0), self.expr_bias)
+        if ctx.pose.startswith("peer_") and not ctx.blink:
+            tgt["blink"] = max(tgt.get("blink", 0.0), 0.45)            # squinting at your screen
             self.expr_bias = max(0.0, self.expr_bias - dt * 2)
         if ctx.mouth > 0.02:
             tgt["aa"] = max(tgt.get("aa", 0.0), ctx.mouth * 0.85)
@@ -1202,7 +1271,7 @@ class VrmCharacter:
             target_yaw = (-38.0 if self.look[0] >= 0 else 38.0) + ctx.user_yaw   # "hmph!" turns away
         elif ctx.pose == "sick" and state in (IDLE, REACT, PET):
             target_yaw = 42.0                                                  # side-on, so you see her double over
-        elif ctx.pose.rpartition("_")[0] in ("pet", "eww", "spray", "mop") and state in (IDLE, REACT, PET):
+        elif ctx.pose.rpartition("_")[0] in ("pet", "eww", "spray", "mop", "peer") and state in (IDLE, REACT, PET):
             target_yaw = 32.0 if ctx.pose.endswith("_l") else -32.0            # turns toward her pet / the mess
         elif state in (SIT, SLEEP):
             target_yaw = 8.0 + ctx.user_yaw

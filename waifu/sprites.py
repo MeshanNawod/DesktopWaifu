@@ -60,6 +60,8 @@ class FrameContext:
     lie: float = 0.0            # 0..1 lying down (you told her to lie down)
     sick: float = 0.0           # 0..1 dizzy / queasy after being shaken hard
     land: float = 0.0           # 0..1 knees bending: absorbing a landing / crouching before a jump
+    beat_ph: float = 0.0        # phase of the music's beat (radians, one turn per beat)
+    groove: str = ""            # how she dances to the current song: energetic | happy | calm | sad | intense
 
 
 # --------------------------------------------------------------------------- procedural

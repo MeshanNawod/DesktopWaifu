@@ -166,7 +166,30 @@ She **hums and sings to herself** now and then (Right-click → 🎵 Sing & voic
 The humming is a small human-like voice synthesizer (vocal-fold pulses, natural pitch wobble and breath, closed-mouth
 "mmm" resonances) singing a new pentatonic tune every time; songs mix hummed phrases with short original lyrics in her
 voice. Pick an **anime-girl voice preset** in the same menu (cute, genki, little sister, soft Japanese, Japanese accent).
-Listen to a sample: [docs/hum_sample.wav](docs/hum_sample.wav).
+To make her hum with a real human voice, put a recording of someone humming at
+`%APPDATA%\DesktopWaifuoice\hum_reference.mp3`; she re-pitches its vocal-fold cycles onto every tune
+(PSOLA), so it sounds like a person, not an instrument. Otherwise she uses her own anime voice the same way.
+
+## She feels your music
+
+When music plays (and she's allowed to hear it; privacy mode can still allow this, it never leaves your PC):
+
+- she works out the song's **mood** from the sound (tempo, energy, brightness, major / minor key) and **dances on the beat**
+  in a matching style: bouncy fist pumps (energetic), side-steps (happy), a slow sway with closed eyes (calm),
+  hugging herself (sad), head-bobbing air guitar (intense); her face and comments follow the mood. With Gemini and window
+  titles allowed she also thinks about what the song means.
+- she **learns the melody** you're listening to and later **hums it** ("that song is stuck in my head~").
+  She never copies or replays the actual audio, she hums the tune in her own voice.
+
+## She looks after you
+
+- **Reminders**: *"remind me at 5:30 pm to call mom"*, *"in 20 minutes to stretch"*, *"every day at 8am to take my medicine"*
+  (or Right-click → 🩺 Care & reminders). She walks over, waves and tells you, plus a Windows notification.
+- **Breaks & health**: after ~50 min of activity she suggests a break, stretches with you and makes tea; reminds you to
+  drink water, rest your eyes, and to go to sleep when it's very late.
+- **Watch me work** (off until you turn it on; say *"watch me work"*): when you code or do heavy work she shades her eyes,
+  squints and peers at your work, offers to help, and invites you for tea after long sessions. It only reads the
+  program's name (like `Code.exe`), never window titles or screenshots.
 
 ## Privacy
 
