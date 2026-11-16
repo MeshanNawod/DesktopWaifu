@@ -167,7 +167,7 @@ The humming is a small human-like voice synthesizer (vocal-fold pulses, natural 
 "mmm" resonances) singing a new pentatonic tune every time; songs mix hummed phrases with short original lyrics in her
 voice. Pick an **anime-girl voice preset** in the same menu (cute, genki, little sister, soft Japanese, Japanese accent).
 To make her hum with a real human voice, put a recording of someone humming at
-`%APPDATA%\DesktopWaifuoice\hum_reference.mp3`; she re-pitches its vocal-fold cycles onto every tune
+`%APPDATA%\DesktopWaifu\voice\hum_reference.mp3`; she re-pitches its vocal-fold cycles onto every tune
 (PSOLA), so it sounds like a person, not an instrument. Otherwise she uses her own anime voice the same way.
 
 ## She feels your music
