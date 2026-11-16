@@ -468,6 +468,11 @@ class CharacterWindow(QWidget):
             except Exception:
                 pass
         size = hr.height() * (1.05 if self.ctx.holding == "teddy" else 1.15)
+        hp = self.sprites.hands_point() if hasattr(self.sprites, "hands_point") else None
+        if hp is not None:               # in her hands
+            k = self.ctx.holding
+            drop = {"tea": 0.05, "book": 0.12, "ball": 0.3}.get(k, 0.32)
+            cx, cy = hp[0], hp[1] + size * drop
         bob = math.sin(self.ctx.t * 2.2) * 1.5
         draw_thing(p, self.ctx.holding, cx, cy + bob, size)
 
@@ -796,6 +801,13 @@ class CharacterWindow(QWidget):
             self.next_action = max(self.next_action, seconds)
             return
         self._set_state(st, duration=seconds)
+
+    def act_pose(self, name: str, seconds: float) -> bool:
+        """A pose she takes on her own for an activity (petting her pet, reading...), for `seconds`."""
+        if self.do_pose(name):
+            self._pose_left = seconds
+            return True
+        return False
 
     def do_pose(self, name: str) -> bool:
         """Hold a pose you asked for (see poses.HELD). Returns False if she can't right now."""

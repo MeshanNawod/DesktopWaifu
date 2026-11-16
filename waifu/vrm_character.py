@@ -222,6 +222,41 @@ def body_pose(name: str, t: float, add, P: dict) -> tuple[float, str | None]:
             add(f"{side}UpperLeg", _rx(-bend * 0.6))
             add(f"{side}LowerLeg", _rx(bend))
         return 0.03 * abs(math.sin(ph * 2)), None
+    if name in ("pet_l", "pet_r"):  # crouching beside her pet, stroking it with one hand
+        s = 1 if name == "pet_l" else -1
+        side, other = ("left", "right") if s > 0 else ("right", "left")
+        stroke = math.sin(t * 5.5)
+        for sd, sgn in (("left", 1), ("right", -1)):
+            P[f"{sd}UpperLeg"] = q_mul(_rx(-100), _rz(sgn * -14))
+            P[f"{sd}LowerLeg"] = _rx(128)
+            P[f"{sd}Foot"] = _rx(-22)
+        P[f"{side}UpperArm"] = q_mul(_rx(-45 + stroke * 8), _rz(s * -62))      # reaching down to the pet's head
+        P[f"{side}LowerArm"] = q_mul(_ry(s * -12), _rz(s * (-25 + stroke * 12)))
+        P[f"{side}Hand"] = _rz(s * (-20 + stroke * 10))
+        P[f"{other}UpperArm"] = q_mul(_rx(-50), _rz(-s * -62))                 # other hand on her knee
+        P[f"{other}LowerArm"] = _ry(-s * -30)
+        add("spine", _rx(36))
+        add("head", q_mul(_rx(16), _rz(s * -10)))
+        return 0.58, "squat"
+    if name == "read":            # holding an open book, reading, turning a page now and then
+        P.update(_arm_pair(-40, -25, -62, -100, -6))
+        if math.sin(t * 0.5) > 0.93:
+            P["rightHand"] = _ry(25)
+        add("head", q_mul(_rx(18), _rz(math.sin(t * 0.3) * 4)))
+        return 0.0, None
+    if name == "tea":             # mug in both hands, a little sip now and then
+        sip = max(0.0, math.sin(t * 0.8)) ** 6
+        P.update(_arm_pair(-38 - sip * 12, -25, -62, -105 - sip * 12, -10))
+        add("head", q_mul(_rx(8 - sip * 14), _rz(5)))
+        return 0.0, None
+    if name == "jumping_jacks":
+        s = abs(math.sin(t * 4.2))
+        P.update({"leftUpperArm": _rz(-ARM_DOWN + 160 * s), "rightUpperArm": _rz(ARM_DOWN - 160 * s),
+                  "leftLowerArm": _rz(5), "rightLowerArm": _rz(-5)})
+        for sd, sgn in (("left", 1), ("right", -1)):
+            P[f"{sd}UpperLeg"] = _rz(sgn * -13 * s)
+            P[f"{sd}Foot"] = _rz(sgn * 13 * s)
+        return 0.03 * (1 - s), None
     if name == "lie":             # lying on her back, one knee up, looking at you
         add("leftUpperLeg", _rx(-32))
         add("leftLowerLeg", _rx(58))
@@ -813,6 +848,16 @@ class VrmCharacter:
         self._sq_radius = (0.05 if small else 0.085) * self.m.height
         self._sq_target = 1.0
 
+    def hands_point(self) -> tuple[float, float] | None:
+        """Where her two hands are (window coordinates), for drawing what she holds."""
+        if self._W is None:
+            return None
+        pts = [self.m.bone_pos(self._W, b) for b in ("leftHand", "rightHand")]
+        if any(p is None for p in pts):
+            return None
+        a, b = self.project(pts[0]), self.project(pts[1])
+        return (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+
     def _cloth_uniforms(self) -> dict | None:
         if self.cloth is None or self._W is None:
             return None
@@ -1085,6 +1130,8 @@ class VrmCharacter:
             target_yaw = -40.0 if self.look[0] >= 0 else 40.0   # turns away from you, sulking
         elif ctx.angry > 0.3 and state in (IDLE, REACT):
             target_yaw = (-38.0 if self.look[0] >= 0 else 38.0) + ctx.user_yaw   # "hmph!" turns away
+        elif ctx.pose in ("pet_l", "pet_r") and state in (IDLE, REACT, PET):
+            target_yaw = 32.0 if ctx.pose == "pet_l" else -32.0                 # turns toward her pet
         elif state in (SIT, SLEEP):
             target_yaw = 8.0 + ctx.user_yaw
         else:

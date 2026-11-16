@@ -328,6 +328,11 @@ class WaifuApp(QObject):
             self._last_quip = 0.0
             self._quip("gift_teddy" if kind == "teddy" else "gift_pet" if kind in PETS else "gift_ball", "happy")
             return
+        if what in ("her_cuddles", "throw", "treat", "pet_ate", "party", "read", "tea", "exercise", "yarn_play"):
+            self.emotion._adjust(1.0, 0.1)
+            self._last_quip = 0.0 if what in ("party", "throw", "treat") else self._last_quip
+            self._quip(what, "happy", chance=0.75)
+            return
         if what in ("her_pets", "her_hugs", "pet_fetched"):
             self.emotion._adjust(1.5, 0.2)
             self._quip(what, "happy", chance=0.8)
@@ -703,6 +708,17 @@ class WaifuApp(QObject):
                 act.triggered.connect(lambda _=False, kk=k: self.play.toggle(kk))
                 pt.addAction(act)
             pt.addSeparator()
+        pt.addSeparator()
+        do = pt.addMenu("✨ Ask her to…")
+        has_pet = any(k in out for k in PETS)
+        for nm, lbl, ok in (("pet", "🤲 Pet her pet", has_pet), ("cuddle", "🤗 Cuddle her pet", has_pet),
+                            ("treat", "🍪 Give her pet a treat", has_pet), ("throw", "⚾ Play fetch", "ball" in out),
+                            ("yarn", "🧶 Play with the kitten", "yarn" in out and "cat" in out),
+                            ("party", "🎉 Dance party with the pets", has_pet), ("read", "📖 Read a book", True),
+                            ("tea", "🍵 Have some tea", True), ("exercise", "🤸 Exercise", True)):
+            act = do.addAction(lbl, lambda n=nm: self.play.start_activity(n) or
+                               self.say("Hang on, I can't right now~", "surprised", speak=False))
+            act.setEnabled(ok)
         if "teddy" in out:
             pt.addAction("🧸 Give her the teddy", lambda: self.play._hug(self.play.get("teddy")))
         if out:

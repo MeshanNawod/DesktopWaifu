@@ -355,6 +355,67 @@ def draw_pet(p: QPainter, species: str, cx: float, base: float, s: float, facing
     p.restore()
 
 
+def draw_treat(p: QPainter, cx: float, cy: float, r: float) -> None:
+    """A heart-shaped cookie."""
+    col = QColor("#e8a35c")
+    path = QPainterPath()
+    x, y, s = cx, cy - r * 0.15, r * 2.2
+    path.moveTo(x, y + s * 0.3)
+    path.cubicTo(x - s * 0.5, y - s * 0.2, x - s * 0.1, y - s * 0.55, x, y - s * 0.2)
+    path.cubicTo(x + s * 0.1, y - s * 0.55, x + s * 0.5, y - s * 0.2, x, y + s * 0.3)
+    p.setPen(_pen("#8a5a2b", max(1.0, r * 0.12)))
+    p.setBrush(col)
+    p.drawPath(path)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor("#ff8fb0"))
+    for dx, dy in ((-0.25, -0.15), (0.2, -0.1), (0.0, 0.15)):
+        p.drawEllipse(QPointF(cx + dx * r, cy + dy * r), r * 0.1, r * 0.1)
+
+
+def draw_book(p: QPainter, cx: float, cy: float, s: float) -> None:
+    """An open book, `s` px wide."""
+    w, h = s, s * 0.62
+    p.setPen(_pen("#9b3b62", max(1.0, s * 0.03)))
+    p.setBrush(QColor("#ff8fb6"))
+    p.drawRoundedRect(QRectF(cx - w / 2 - s * 0.03, cy - h / 2 - s * 0.02, w + s * 0.06, h + s * 0.06), 3, 3)
+    for sx in (-1, 1):
+        page = QPainterPath()
+        page.moveTo(cx, cy - h / 2 + s * 0.04)
+        page.cubicTo(cx + sx * w * 0.2, cy - h / 2 - s * 0.02, cx + sx * w * 0.35, cy - h / 2, cx + sx * w / 2, cy - h / 2 + s * 0.02)
+        page.lineTo(cx + sx * w / 2, cy + h / 2 - s * 0.02)
+        page.cubicTo(cx + sx * w * 0.35, cy + h / 2 - s * 0.04, cx + sx * w * 0.2, cy + h / 2 - s * 0.06, cx, cy + h / 2)
+        page.closeSubpath()
+        p.setPen(_pen("#c9b8a8", max(0.8, s * 0.015)))
+        p.setBrush(QColor("#fffaf2"))
+        p.drawPath(page)
+        p.setPen(_pen("#b9aaa0", max(0.6, s * 0.012)))
+        for k in range(4):
+            yy = cy - h * 0.25 + k * h * 0.15
+            p.drawLine(QPointF(cx + sx * w * 0.08, yy), QPointF(cx + sx * w * 0.42, yy))
+
+
+def draw_tea(p: QPainter, cx: float, cy: float, s: float) -> None:
+    """A steaming mug, `s` px tall."""
+    t = time.monotonic()
+    p.setPen(_pen("#c7c0d8", max(1.0, s * 0.05)))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    for k in (-1, 1):
+        ph = (t * 0.8 + (k + 1) * 0.3) % 1.0
+        path = QPainterPath()
+        x0, y0 = cx + k * s * 0.15, cy - s * 0.55 - ph * s * 0.3
+        path.moveTo(x0, y0 + s * 0.25)
+        path.cubicTo(x0 - s * 0.1, y0 + s * 0.15, x0 + s * 0.1, y0 + s * 0.08, x0, y0)
+        p.drawPath(path)
+    p.setPen(_pen("#8a4a5a", max(1.0, s * 0.05)))
+    p.drawArc(QRectF(cx + s * 0.28, cy - s * 0.25, s * 0.3, s * 0.35), -90 * 16, 180 * 16)
+    p.setBrush(QColor("#ffe0ec"))
+    p.drawRoundedRect(QRectF(cx - s * 0.35, cy - s * 0.45, s * 0.7, s * 0.85), s * 0.12, s * 0.12)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor("#a8664a"))
+    p.drawEllipse(QPointF(cx, cy - s * 0.43), s * 0.3, s * 0.07)
+    _heart(p, cx, cy, s * 0.35, QColor("#ff6b97"))
+
+
 def draw_thing(p: QPainter, kind: str, cx: float, cy: float, s: float) -> None:
     """Draw a pet / toy centred on (cx, cy), about `s` px tall (used for what she's holding)."""
     if kind == "ball":
@@ -363,6 +424,12 @@ def draw_thing(p: QPainter, kind: str, cx: float, cy: float, s: float) -> None:
         draw_yarn(p, cx, cy, s * 0.36)
     elif kind == "teddy":
         draw_teddy(p, cx, cy + s * 0.5, s, happy=True)
+    elif kind == "book":
+        draw_book(p, cx, cy, s * 0.8)
+    elif kind == "tea":
+        draw_tea(p, cx + s * 0.1, cy - s * 0.05, s * 0.45)
+    elif kind == "treat":
+        draw_treat(p, cx, cy, s * 0.25)
     elif kind in SPECIES:
         draw_pet(p, kind, cx - s * 0.05, cy + s * 0.5, s, 1.0, eyes="happy", pose="held",
                  tail=time.monotonic() * 3)
@@ -395,6 +462,7 @@ class Thing(QWidget):
         self.hearts = 0.0
         self.say_text, self.say_t = "", 0.0
         self.squish = 0.0
+        self.flying = False          # you threw it: it can hit / land on her until it touches the ground
         self._pressed = False
         self._press_t = 0.0
         self._press_g = QPointF()
@@ -459,6 +527,7 @@ class Thing(QWidget):
             else:
                 self.vy = 0.0
                 self.grounded = True
+                self.flying = False
                 self.vx *= max(0.0, 1 - dt * self.friction())
         self.move(round(self.px), round(self.py))
 
@@ -523,6 +592,7 @@ class Thing(QWidget):
                 if time.perf_counter() - t1 < 0.08 and t1 - t0 > 1e-3:
                     vx, vy = (p1.x() - p0.x()) / (t1 - t0), (p1.y() - p0.y()) / (t1 - t0)
             self.vx, self.vy = max(-2600.0, min(2600.0, vx)), max(-2600.0, min(2600.0, vy))
+            self.flying = True
             self.on_release()
             self.play.released(self)
         elif held > 1.2:
@@ -584,16 +654,16 @@ class Thing(QWidget):
 
 class Toy(Thing):
     def __init__(self, play, kind, scale):
-        self.size = {"ball": 34, "yarn": 28, "teddy": 50}[kind] * scale
-        r = self.size * (0.42 if kind == "ball" else 0.36 if kind == "yarn" else 0.45)
+        self.size = {"ball": 34, "yarn": 28, "teddy": 50, "treat": 20}[kind] * scale
+        r = self.size * (0.42 if kind == "ball" else 0.36 if kind in ("yarn", "treat") else 0.45)
         w = int(self.size * (1.9 if kind == "yarn" else 1.35)) + 8
         h = int(self.size * 1.25) + 18
         super().__init__(play, kind, w, h)
         self.radius = r
-        self.bounce = {"ball": 0.72, "yarn": 0.35, "teddy": 0.25}[kind]
+        self.bounce = {"ball": 0.72, "yarn": 0.35, "teddy": 0.25, "treat": 0.2}[kind]
 
     def friction(self) -> float:
-        return {"ball": 0.8, "yarn": 2.2, "teddy": 7.0}[self.kind]
+        return {"ball": 0.8, "yarn": 2.2, "teddy": 7.0, "treat": 8.0}[self.kind]
 
     def physics(self, dt: float) -> None:
         super().physics(dt)
@@ -630,6 +700,8 @@ class Toy(Thing):
             draw_ball(p, cx, base - self.radius, self.radius, self.angle)
         elif self.kind == "yarn":
             draw_yarn(p, cx, base - self.radius, self.radius, self.angle)
+        elif self.kind == "treat":
+            draw_treat(p, cx, base - self.radius, self.radius)
         else:
             draw_teddy(p, cx, base, self.size, happy=self.hearts > 0)
         p.restore()
@@ -707,6 +779,11 @@ class Pet(Thing):
             return
         if not self.grounded:
             return
+        if self.mode != "fetch":           # interrupted (petted, party, nap...): drop whatever it was carrying
+            for t in self.play.things:
+                if t.carried_by is self:
+                    t.carried_by = None
+                    t.vx, t.vy = self.facing * 80, -120
         self.mode_t -= dt
         her = self.play.her_center()
         me = self.center().x()
@@ -717,6 +794,20 @@ class Pet(Thing):
             speed = 260
             if self.mode_t <= 0:
                 self.mode, self.mode_t = "idle", 2.0
+        elif self.mode == "wait":                       # staying put next to her (being petted / waiting)
+            if her is not None:
+                self.facing = 1.0 if her.x() > me else -1.0
+            if self.mode_t <= 0:
+                self.mode, self.mode_t = "idle", 1.0
+        elif self.play.party_t > 0 and self.mode not in ("held", "sleep"):
+            if her is not None and abs(her.x() - me) > 200:     # come join the party
+                self.facing = 1.0 if her.x() > me else -1.0
+                speed = 180
+            elif random.random() < dt * 2.2:                      # hop to the beat
+                self.vy = -random.uniform(260, 380)
+                self.facing = -self.facing if random.random() < 0.3 else self.facing
+                self.say(random.choice(("♪", "♫", self.sp["sounds"][0])), 0.8)
+                self.hearts = 1.0
         elif self.play.her_asleep() and self.mode not in ("sleep",):
             if her is not None and abs(her.x() - me) > 110:
                 self.facing = 1.0 if her.x() > me else -1.0
@@ -737,7 +828,10 @@ class Pet(Thing):
                 self.facing = 1.0 if tx > me else -1.0
                 speed = 240
                 if abs(tx - me) < self.size * 0.45 and abs(toy.center().y() - self.center().y()) < self.size:
-                    if self.kind == "puppy" and toy.kind == "ball" and her is not None:
+                    if toy.kind == "treat":
+                        self.toy = None
+                        self.play.eat(toy, self)
+                    elif self.kind == "puppy" and toy.kind == "ball" and her is not None:
                         toy.carried_by = self          # got it! bring it back to her
                         self.mode, self.mode_t = "fetch", 12.0
                         self.say("*chomp*", 1.0)
@@ -842,6 +936,9 @@ class Playground(QObject):
         self.things: list[Thing] = []
         self._next_play = random.uniform(15, 30)
         self._goal: tuple[str, Thing] | None = None
+        self._act: dict | None = None
+        self._throwing: Thing | None = None
+        self.party_t = 0.0
         self._goal_t = 0.0
         self._last = time.perf_counter()
         self._timer = QTimer(self)
@@ -898,7 +995,7 @@ class Playground(QObject):
             self.add(k, announce=False)
 
     def _save(self) -> None:
-        self.cfg.companions = self.kinds()
+        self.cfg.companions = [k for k in self.kinds() if k in LABELS]
         try:
             self.cfg.save()
         except Exception:
@@ -998,6 +1095,22 @@ class Playground(QObject):
         t = self.get(kind)
         if t is None:
             return
+        if self._throwing is t:                    # wheee~ throw!
+            self._throwing = None
+            r = self.c.global_rect()
+            her = r.center().x()
+            pup = self.get("puppy") or self.get("cat")
+            scr = QGuiApplication.screenAt(r.center()) or QGuiApplication.primaryScreen()
+            mid = scr.availableGeometry().center().x()
+            d = (1.0 if mid >= her else -1.0) if pup is None else (1.0 if pup.center().x() < her and random.random() < 0.3 else
+                                                                 1.0 if her < mid else -1.0)
+            t.place(her + d * 30, r.top() + r.height() * 0.3)
+            t.vx, t.vy = d * random.uniform(700, 1000), -random.uniform(650, 900)
+            t.cooldown = 1.2
+            t.show()
+            if hasattr(self.c, "kick"):
+                self.c.kick()
+            return
         r = self.c.global_rect()
         t.place(r.center().x() + random.choice((-1, 1)) * 60, r.bottom() - r.height() * 0.45)
         t.vy, t.vx = -200, random.uniform(-60, 60)
@@ -1031,6 +1144,9 @@ class Playground(QObject):
     def toy_to_chase(self, pet: Pet) -> Toy | None:
         me = pet.center()
         best = None
+        treat = self.get("treat")
+        if treat is not None and treat.isVisible() and abs(treat.center().x() - me.x()) < 1200:
+            return treat
         for t in self.things:
             if not isinstance(t, Toy) or t.kind not in pet.sp["likes"] or t.dragging or not t.isVisible():
                 continue
@@ -1058,7 +1174,7 @@ class Playground(QObject):
             t.think(dt)
             t.update()
             # flying into her (swept along its path, so fast throws can't skip through her)
-            if not t.dragging and t.carried_by is None and t.cooldown <= 0 and t.speed() > 350:
+            if t.flying and not t.dragging and t.carried_by is None and t.cooldown <= 0 and t.speed() > 350:
                 lp = None
                 after = t.center()
                 steps = max(1, int((after - before).manhattanLength() / max(6.0, t.radius * 0.6)))
@@ -1075,54 +1191,204 @@ class Playground(QObject):
                         self._kick(t)
         self._her_plays(dt)
 
-    def _her_plays(self, dt: float) -> None:
-        """Now and then she goes over to play with a pet / toy."""
-        from .sprites import IDLE, SIT, WALK
+    # ------------------------------------------------------------------ her activities
+    ACT_PETS = ("pet", "pet", "pet", "cuddle", "treat", "party")
+
+    def _act_options(self) -> list[tuple[str, Thing | None]]:
         c = self.c
-        if self._goal is not None:
-            kind, t = self._goal
-            self._goal_t -= dt
-            if t not in self.things or not t.isVisible() or self._goal_t <= 0 or not self._her_free() \
-                    or t.dragging or c._dragging:
-                self._goal = None
+        angry = c.ctx.angry > 0.3
+        opts: list[tuple[str, Thing | None]] = []
+        vis = [t for t in self.things if t.isVisible() and not t.dragging and t.carried_by is None]
+        pets = [t for t in vis if isinstance(t, Pet) and t.mode not in ("sleep", "flee")]
+        toys = [t for t in vis if isinstance(t, Toy)]
+        for t in toys:
+            if t.kind in ("ball", "yarn") and t.grounded:
+                opts += [("kick", t)] * (4 if angry else 1)
+                if not angry and t.kind == "ball":
+                    opts += [("throw", t)] * (3 if self.get("puppy") else 1)
+                if not angry and t.kind == "yarn" and self.get("cat"):
+                    opts += [("yarn", t)] * 2
+            elif t.kind == "teddy" and not angry:
+                opts += [("hug", t)]
+        if not angry:
+            for p in pets:
+                opts += [("pet", p)] * 4 + [("cuddle", p)] * 2 + [("treat", p)] * 2
+            if pets:
+                opts += [("party", None)] * 2
+            opts += [("read", None), ("tea", None), ("exercise", None)]   # things she does on her own
+        return opts
+
+    def start_activity(self, name: str, target: Thing | None = None) -> bool:
+        """Begin one of her activities (also used by the menu). Returns False if she can't now."""
+        c = self.c
+        if not self._her_free() or c.busy or c.talking or c.sulking:
+            return False
+        if target is None and name in ("pet", "cuddle", "treat"):
+            pets = [t for t in self.things if isinstance(t, Pet) and t.isVisible()]
+            target = random.choice(pets) if pets else None
+        if target is None and name in ("throw", "kick"):
+            target = self.get("ball") or self.get("yarn")
+        if target is None and name == "yarn":
+            target = self.get("yarn")
+        if target is None and name not in ("party", "read", "tea", "exercise"):
+            return False
+        if name == "party" and not any(isinstance(t, Pet) for t in self.things):
+            return False
+        if c.user_pose:
+            c.stand_up()
+        self._act = {"name": name, "t": target, "stage": "go" if target is not None else "do", "time": 16.0, "k": 0.0}
+        if target is not None:
+            c.walk_to(self._spot(name, target))
+        else:
+            self._begin(self._act)          # nothing to walk to: start right away
+        return True
+
+    def _spot(self, name: str, t: Thing) -> float:
+        """Where she walks to for an activity (global x of her centre)."""
+        her = self.c.global_rect().center().x()
+        tx = t.center().x()
+        if name in ("pet", "treat"):      # stand beside the pet, not on it
+            side = 1.0 if tx >= her else -1.0
+            return tx - side * self._reach()
+        return tx
+
+    def _reach(self) -> float:
+        ppm = getattr(self.c.sprites, "ppm", None)
+        return (0.34 * ppm) if ppm else self.c.width() * 0.3
+
+    def _end_act(self) -> None:
+        self._act = None
+        self._next_play = random.uniform(18, 40)
+
+    def _her_plays(self, dt: float) -> None:
+        """Now and then she does something: plays with her pets and toys, or reads, sips tea, exercises."""
+        from .sprites import DRAG, FALL, IDLE, KNOCK, SIT, SLEEP, WALK
+        c = self.c
+        self.party_t = max(0.0, self.party_t - dt)
+        a = self._act
+        if a is not None:
+            a["time"] -= dt
+            t = a["t"]
+            gone = t is not None and (t not in self.things or (not t.isVisible() and a["stage"] == "go") or t.dragging)
+            if c.state in (DRAG, FALL, KNOCK, SLEEP) or c._dragging or a["time"] <= 0 or gone:
+                if a.get("pose") and c.user_pose == a["pose"]:
+                    c.stand_up()
+                if isinstance(t, Pet) and t.mode == "wait":
+                    t.mode, t.mode_t = "idle", 1.0
+                self._end_act()
                 return
-            her = c.global_rect().center().x()
-            tx = t.center().x()
-            if abs(tx - her) < max(45.0, c.width() * 0.22):
-                self._goal = None
-                if kind == "kick":
-                    self._kick(t)
-                elif kind == "pet" and isinstance(t, Pet):
-                    t.hearts = 3.0
-                    t.mode, t.mode_t = "happy", 3.0
-                    t.sound()
-                    c.pet_animal()
-                    self.event.emit("her_pets", t.kind)
-                elif kind == "hug":
-                    self._hug(t)
-                    self.event.emit("her_hugs", t.kind)
-            elif c.state != WALK and c.state in (IDLE, SIT):
-                c.walk_to(tx)
+            name = a["name"]
+            if a["stage"] == "go":
+                goal = self._spot(name, t)
+                her = c.global_rect().center().x()
+                if abs(goal - her) > max(30.0, c.width() * 0.12):
+                    if c.state != WALK and c.state in (IDLE, SIT):
+                        c.walk_to(goal)
+                    if isinstance(t, Pet) and name in ("pet", "treat", "cuddle"):
+                        t.mode, t.mode_t = "wait", 3.0          # "stay~"
+                    return
+                a["stage"], a["k"] = "do", 0.0
+                self._begin(a)
+                return
+            a["k"] = a.get("k", 0.0) + dt
+            self._during(a, dt)
             return
         self._next_play -= dt
         if self._next_play > 0:
             return
-        self._next_play = random.uniform(20, 45)
+        self._next_play = random.uniform(18, 40)
         if not self._her_free() or c.state not in (IDLE, SIT, WALK) or c.busy or c.talking \
                 or getattr(c, "user_pose", None) or c.sulking:
             return
-        angry = c.ctx.angry > 0.3
-        options = []
-        for t in self.things:
-            if not t.isVisible() or t.dragging:
-                continue
-            if isinstance(t, Toy) and t.kind in ("ball", "yarn") and t.grounded and t.carried_by is None:
-                options += [("kick", t)] * (4 if angry else 2)
-            elif not angry and isinstance(t, Pet) and t.mode != "sleep":
-                options += [("pet", t)] * 2
-            elif not angry and t.kind == "teddy":
-                options.append(("hug", t))
-        if options:
-            self._goal = random.choice(options)
-            self._goal_t = 14.0
-            c.walk_to(self._goal[1].center().x())
+        opts = self._act_options()
+        if opts:
+            self.start_activity(*random.choice(opts))
+
+    def _begin(self, a: dict) -> None:
+        c, name, t = self.c, a["name"], a["t"]
+        her = c.global_rect().center().x()
+        if name == "pet" and isinstance(t, Pet):
+            side = 1.0 if t.center().x() >= her else -1.0
+            # the pet comes right under her hand, facing her
+            t.place(her + side * (self._reach() + t.size * 0.2))
+            t.facing = -side
+            t.mode, t.mode_t = "wait", 6.0
+            a["pose"] = "pet_l" if side > 0 else "pet_r"
+            c.act_pose(a["pose"], 5.0)
+            a["time"] = 5.5
+            self.event.emit("her_pets", t.kind)
+        elif name == "cuddle":
+            self._hug(t, 9.0)
+            self.event.emit("her_cuddles", t.kind)
+            self._end_act()
+        elif name == "hug":
+            self._hug(t)
+            self.event.emit("her_hugs", t.kind)
+            self._end_act()
+        elif name == "kick":
+            self._kick(t)
+            self._end_act()
+        elif name == "yarn":
+            cat = self.get("cat")
+            d = 1.0 if cat is None or cat.center().x() >= t.center().x() else -1.0
+            t.vx, t.vy = d * random.uniform(280, 420), -random.uniform(250, 380)
+            c.kick()
+            self.event.emit("yarn_play", "cat")
+            self._end_act()
+        elif name == "throw":                      # pick the ball up, wind up, throw it
+            t.hide()
+            c.hold("ball", 0.9)
+            self._throwing = t
+            a["time"] = 1.6
+            self.event.emit("throw", t.kind)
+        elif name == "treat" and isinstance(t, Pet):
+            side = 1.0 if t.center().x() >= her else -1.0
+            if self.get("treat") is None:
+                tr = Toy(self, "treat", max(0.6, self.cfg.scale))
+                r = c.global_rect()
+                tr.place(her + side * self._reach() * 0.6, r.bottom() - r.height() * 0.45)
+                tr.vx, tr.vy = side * 160, -220
+                tr.show()
+                self.things.append(tr)
+            t.mode, t.mode_t = "idle", 0.5
+            c.act_pose("pet_l" if side > 0 else "pet_r", 2.0)
+            a["pose"] = "pet_l" if side > 0 else "pet_r"
+            a["time"] = 2.2
+            self.event.emit("treat", t.kind)
+        elif name == "party":
+            c.act_pose("dance", 8.0)
+            self.party_t = 8.0
+            a["time"] = 8.2
+            self.event.emit("party", "")
+        elif name == "read":
+            c.act_pose("read", 22.0)
+            c.hold("book", 22.0)
+            a["time"] = 22.5
+            self.event.emit("read", "")
+        elif name == "tea":
+            c.act_pose("tea", 14.0)
+            c.hold("tea", 14.0)
+            a["time"] = 14.5
+            self.event.emit("tea", "")
+        elif name == "exercise":
+            c.act_pose("jumping_jacks", 7.0)
+            a["time"] = 7.5
+            self.event.emit("exercise", "")
+        else:
+            self._end_act()
+
+    def _during(self, a: dict, dt: float) -> None:
+        t = a["t"]
+        if a["name"] == "pet" and isinstance(t, Pet):
+            t.mode, t.mode_t = "wait", 1.0
+            t.hearts = max(t.hearts, 1.5)
+            if a["k"] > 1.0 and not a.get("purred"):
+                a["purred"] = True
+                t.say({"cat": "Purrr~ ♡", "puppy": "*wag wag wag*", "bunny": "*happy nose wiggle*"}[t.kind], 2.5)
+
+    def eat(self, treat: Toy, pet: Pet) -> None:
+        self.remove("treat")
+        pet.hearts = 3.0
+        pet.mode, pet.mode_t = "happy", 3.0
+        pet.say("nom nom~ ♡", 2.0)
+        self.event.emit("pet_ate", pet.kind)

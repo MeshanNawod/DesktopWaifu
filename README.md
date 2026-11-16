@@ -137,7 +137,14 @@ a **teddy bear** and a **yarn ball**. Each one lives on your desktop with real p
 - **Pick them up and throw them**; click a pet to boop it; double-click or stroke it to pet it (hearts, purring, wagging).
 - **Drop the teddy or a pet on her** and she **hugs it**. Drop the ball on her and she bats it back.
 - Pets follow her, chase the ball and yarn, nuzzle her and nap when she naps. **The puppy plays fetch** and brings the ball back to her.
-- Now and then **she goes over to play**: kicks the ball, pets her pet, hugs her teddy.
+- **She has a life of her own.** Every so often she picks something to do:
+  - **pets her pet**: crouches down beside it and strokes its head (it purrs / wags),
+  - **cuddles** her pet in her arms, **gives it a treat** (it runs over: "nom nom~"),
+  - **plays fetch**: picks up the ball and throws it, the puppy brings it back,
+  - rolls the **yarn** for the kitten, kicks the ball around, hugs her teddy,
+  - throws a **dance party** (the pets hop along to the beat),
+  - and on her own: **reads a book**, has a **cup of tea**, does **jumping jacks**.
+- You can ask for any of these: Right-click → 🐾 Pets & toys → **✨ Ask her to…**
 - **Throw something hard at her** and it's a bonk: she gets angry. **Hurt a pet** (hold it squeezed, or slam it down) and she gets angry at you.
 
 ## Cloth physics
