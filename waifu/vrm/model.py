@@ -76,6 +76,7 @@ class Material:
     zwrite: bool = True
     queue: int = 0
     uv_xf: np.ndarray = field(default_factory=lambda: np.eye(3))
+    colorize: list | None = None   # [r, g, b, strength]: recolour the texture (e.g. pink hair)
 
 
 @dataclass
@@ -131,7 +132,7 @@ def _uv_xf(texinfo: dict | None, vrm0_st: list | None = None) -> np.ndarray:
 
 
 class VrmModel:
-    def __init__(self, path):
+    def __init__(self, path, overrides: dict | None = None):
         self.g = g = Gltf(path)
         j = g.j
         ext = j.get("extensions", {})
@@ -220,6 +221,12 @@ class VrmModel:
                 self.options = _json.loads(side.read_text(encoding="utf-8"))
             except Exception:  # noqa: BLE001
                 log.warning("Bad model options file %s", side)
+        if overrides:                      # a character variant (e.g. Seed-chan) layered on top
+            for k, v in overrides.items():
+                if k.startswith("hide_") and isinstance(v, list):
+                    self.options[k] = list(self.options.get(k, [])) + v
+                else:
+                    self.options[k] = v
         hide_mat = set(self.options.get("hide_materials", []))
         hide_mesh = set(self.options.get("hide_meshes", []))
         mat_names = [m.get("name", "") for m in j.get("materials", [])]
@@ -227,11 +234,19 @@ class VrmModel:
             mesh_name = j["meshes"][mi].get("name", "")
             self.mesh_prims[mi] = [p for p in prims if mesh_name not in hide_mesh
                                    and not (0 <= p.material < len(mat_names) and mat_names[p.material] in hide_mat)]
+        for name, col in self.options.get("colorize", {}).items():
+            for i, mn in enumerate(mat_names):
+                if mn == name and i < len(self.materials):
+                    self.materials[i].colorize = list(col)
         if not self.materials:
             self.materials = [Material()]
 
         # ---- VRM bits
         self.humanoid = self._humanoid(ext)
+        for bone, sc in (overrides or {}).get("bone_scale", {}).items():   # e.g. a bigger, cuter head
+            ni = self.humanoid.get(bone)
+            if ni is not None:
+                self.nodes[ni].rest_s = self.nodes[ni].rest_s * float(sc)
         self.expressions = self._expressions(ext, jn)
         self.colliders, self.springs = self._springs(ext)
         self.look_type = self._look_type(ext)

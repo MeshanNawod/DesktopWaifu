@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 # Animation state names (shared with character.py)
 IDLE, WALK, SIT, SLEEP, DRAG, FALL, PET, REACT = (
     "idle", "walk", "sit", "sleep", "drag", "fall", "pet", "react")
+KNOCK = "knocked"   # knocked over: lies dizzy, then gets back up
 
 
 @dataclass
@@ -47,6 +48,11 @@ class FrameContext:
     grab: str = ""              # limb she is held by while dragged: hand_l / hand_r / leg_l / leg_r
     grab_pt: tuple = (0.0, 0.0) # where the cursor holds her, in window coordinates
     struggle: float = 0.0       # 0..1 wriggling intensity while lifted
+    knock: float = 0.0          # 0..1 how far she has fallen over (knocked down)
+    knock_dir: float = 1.0      # which way she tips while falling
+    user_yaw: float = 0.0       # how far you've turned her (mouse wheel / Pose menu), degrees
+    spin: float = 0.0           # extra spin while she twirls, degrees
+    jump: bool = False          # she jumped on purpose (cute "yay!" pose in the air)
 
 
 # --------------------------------------------------------------------------- procedural
@@ -150,6 +156,15 @@ class ProceduralSprites:
         if ctx.facing_left:
             p.translate(BASE_W, 0)
             p.scale(-1, 1)
+        if ctx.spin:               # twirling: fake a 3D spin by squashing horizontally
+            p.translate(BASE_W / 2, 0)
+            p.scale(max(0.08, abs(math.cos(math.radians(ctx.spin)))), 1.0)
+            p.translate(-BASE_W / 2, 0)
+        if ctx.knock > 0:          # knocked over: flattened and tipped sideways
+            p.translate(BASE_W / 2, GROUND)
+            p.rotate(ctx.knock_dir * 25 * ctx.knock)
+            p.scale(1.0 + 0.1 * ctx.knock, 1.0 - 0.55 * ctx.knock)
+            p.translate(-BASE_W / 2, -GROUND)
         self._draw(p, state, ctx)
         p.end()
         return img
@@ -657,6 +672,12 @@ def list_characters() -> list[tuple[str, str, str]]:
     for f in sorted(MODELS_DIR.glob("*.vrm")) + sorted(MODELS_DIR.glob("*/*.vrm")):
         out.append((f"3D: {f.stem}", "vrm", str(f)))
         out.append((f"3D: {f.stem} 2 (realistic, interactive)", "vrm", str(f) + "#v2"))
+    for f in sorted(MODELS_DIR.glob("*.variant.json")):     # cute / custom variants of a base model
+        try:
+            name = json.loads(f.read_text(encoding="utf-8")).get("name", f.stem)
+        except Exception:  # noqa: BLE001
+            continue
+        out.insert(0, (f"3D: {name}", "vrm", str(f)))
     for f in sorted(MODELS_DIR.glob("*.fbx")) + sorted(MODELS_DIR.glob("*/*.fbx")):
         name = f.stem
         meta = f.with_name("character.json")
@@ -681,6 +702,11 @@ def load_sprites(sprite_pack: str, scale: float, dpr: float, style: str = "vrm",
     if style == "vrm":
         path = vrm_path or default_vrm()
         try:
+            if path.lower().endswith(".variant.json"):
+                import json as _json
+                from .vrm_character import VrmCharacter
+                var = _json.loads(Path(path).read_text(encoding="utf-8"))
+                return VrmCharacter(Path(path).parent / var["base"], scale, dpr, variant=var)
             if path.lower().endswith(".fbx"):
                 from .mesh_character import MeshCharacter
                 return MeshCharacter(path, scale, dpr)

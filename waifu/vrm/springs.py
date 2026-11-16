@@ -13,13 +13,18 @@ from .model import VrmModel
 
 class _J:
     __slots__ = ("node", "child", "stiff", "grav", "gdir", "drag", "hit", "axis", "length",
-                 "cur", "prev", "init_r", "child_local", "pin", "spring", "grab")
+                 "cur", "prev", "init_r", "child_local", "pin", "spring", "grab", "grab_w")
 
 
 class SpringSystem:
-    def __init__(self, model: VrmModel):
+    def __init__(self, model: VrmModel, hair_nodes: set | None = None):
         self.m = model
         self.joints: list[_J] = []
+        # optional per-model tuning (assets/models/<name>.json -> "hair_physics"): many models ship with
+        # drag = 1.0, which kills all momentum, so hair never swings. Make it soft and lively.
+        hp = model.options.get("hair_physics", {}) if hasattr(model, "options") else {}
+        hair_nodes = hair_nodes or set()
+        self.wind_scale = {}
         self.spring_cols: list[list[int]] = []
         for si, s in enumerate(model.springs):
             self.spring_cols.append(s.colliders)
@@ -27,6 +32,13 @@ class SpringSystem:
                 j = _J()
                 j.node, j.child, j.spring = sj.node, sj.child, si
                 j.stiff, j.grav, j.gdir, j.drag, j.hit = sj.stiffness, sj.gravity, normalize(sj.gdir), sj.drag, sj.hit_radius
+                is_hair = sj.node in hair_nodes
+                if is_hair and hp:
+                    j.stiff *= float(hp.get("stiffness_scale", 1.0))
+                    j.drag = float(hp.get("drag", j.drag))
+                    j.grav = max(j.grav, float(hp.get("gravity", 0.0)))
+                j.drag = min(j.drag, 0.85)          # always keep some momentum
+                self.wind_scale[id(j)] = float(hp.get("wind", 0.0)) if is_hair else 0.0
                 n = model.nodes[sj.node]
                 if sj.child is not None:
                     j.child_local = model.nodes[sj.child].rest_t * model.nodes[sj.child].rest_s
@@ -36,6 +48,7 @@ class SpringSystem:
                 j.init_r = n.rest_r.copy()
                 j.pin = None
                 j.grab = None
+                j.grab_w = 1.0
                 self.joints.append(j)
         self._ready = False
 
@@ -62,7 +75,7 @@ class SpringSystem:
             out.append((p, c.radius, t))
         return out
 
-    def update(self, W: np.ndarray, dt: float) -> None:
+    def update(self, W: np.ndarray, dt: float, wind: np.ndarray | None = None) -> None:
         if not self.joints:
             return
         if not self._ready:
@@ -81,6 +94,8 @@ class SpringSystem:
                 inertia = (j.cur - j.prev) * (1.0 - j.drag)
                 stiff = q_rotate(q_mul(prot, j.init_r), j.axis) * (j.stiff * dt)
                 nxt = j.cur + inertia + stiff + j.gdir * (j.grav * dt)
+                if wind is not None:
+                    nxt = nxt + wind * (self.wind_scale.get(id(j), 0.0) * dt)
             nxt = pos + normalize(nxt - pos) * j.length
             for ci in self.spring_cols[j.spring]:
                 if ci >= len(cols):

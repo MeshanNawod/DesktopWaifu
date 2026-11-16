@@ -349,6 +349,17 @@ class LiveImageCharacter:
         else:
             self._move_body = None if delta is None else (delta.x(), delta.y())
 
+    def brush(self, local, vel) -> None:
+        """Cursor brushing her hair / scarf: those parts get flicked along with the cursor."""
+        if local is None or vel is None:
+            return
+        zone = self.zone_at(local)
+        if zone in ("hair_l", "hair_r", "scarf"):
+            b = self.bones[zone]
+            sx = -1 if self._xf.m11() < 0 else 1
+            b.kick(max(-600.0, min(600.0, vel.x() * 0.35 * sx)) * self.dpr,
+                   max(-400.0, min(400.0, vel.y() * 0.2)) * self.dpr)
+
     def squeeze(self, local) -> None:
         if local is None:
             self._sq_target = 0.0
@@ -419,9 +430,16 @@ class LiveImageCharacter:
             h.tx += math.sin(t * 4) * 0.006 * rh
         if "hand_face" not in self._tugged:   # her hand moves a little while she talks
             b["hand_face"].tx, b["hand_face"].ty = 0.0, ctx.mouth * 0.004 * rh
-        for name, ph, amp in (("hair_l", 0.0, 1.0), ("hair_r", 1.1, 1.0), ("scarf", 2.0, 0.6)):
-            if name not in self._tugged:      # light breeze
-                b[name].tx = (math.sin(t * 1.3 + ph) * 0.006 + math.sin(t * 2.9 + ph) * 0.002) * rh * amp
+        self._gust_t = getattr(self, "_gust_t", 4.0) - dt
+        if self._gust_t <= 0:                 # an occasional gust of wind
+            self._gust = random.uniform(0.012, 0.022) * random.choice((-1, 1))
+            self._gust_t = random.uniform(5.0, 11.0)
+        self._gust = getattr(self, "_gust", 0.0) * max(0.0, 1.0 - dt * 0.9)
+        for name, ph, amp in (("hair_l", 0.0, 1.0), ("hair_r", 1.1, 1.0), ("scarf", 2.0, 0.7), ("skirt", 0.5, 0.35)):
+            if name not in self._tugged:      # breeze + gusts
+                flutter = math.sin(t * 8 + ph) * abs(self._gust) * 0.4
+                b[name].tx = (math.sin(t * 1.3 + ph) * 0.009 + math.sin(t * 2.9 + ph) * 0.003
+                              + self._gust + flutter) * rh * amp
         if self._move_head:                       # you're tilting her head
             h.tx += max(-0.03, min(0.03, self._move_head[0] * 0.0004)) * rh
             h.ty += max(-0.02, min(0.02, self._move_head[1] * 0.0003)) * rh
@@ -629,6 +647,11 @@ class LiveImageCharacter:
         xf.rotate(angle)
         if state in (SIT, SLEEP):
             xf.scale(1.0, 0.975)
+        if ctx.spin:               # twirling: fake 3D spin
+            xf.scale(max(0.08, abs(math.cos(math.radians(ctx.spin)))), 1.0)
+        if ctx.knock > 0:          # knocked over: flattened and tipped sideways
+            xf.rotate(ctx.knock_dir * 18 * ctx.knock)
+            xf.scale(1.0 + 0.08 * ctx.knock, 1.0 - 0.55 * ctx.knock)
         xf.translate(-px, -py)
         if ctx.facing_left:
             xf.translate(dw, 0)

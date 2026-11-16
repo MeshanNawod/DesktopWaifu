@@ -108,6 +108,14 @@ class GestureListener(QObject):
         self.squeezing = False
         self.gesture.emit(DOUBLE, zone)
 
+    def cancel(self) -> None:
+        """This press was already handled (e.g. a smack): no click / squeeze follows."""
+        self._sq.stop()
+        self._hard.stop()
+        self._single.stop()
+        self.consumed = True
+        self.squeezing = False
+
     def hover_stroke(self, zone: str) -> None:
         self.gesture.emit(STROKE, zone)
 

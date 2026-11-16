@@ -116,6 +116,8 @@ class MeshCharacter:
         self.timers = {"eye_shut": 0.0, "blush": 0.0, "tears": 0.0, "happy": 0.0, "steam": 0.0}
         self._press_local = QPointF()
         self._tug_hand = None
+        self._gesture = None
+        self._gesture_t = 0.0
         self._move_head = None
         self._move_body = None
         self._sq_center = np.zeros(3)
@@ -290,6 +292,10 @@ class MeshCharacter:
         else:
             self.bend_v += np.array([s * 0.25, 0.0])
 
+    def start_gesture(self, name: str) -> None:
+        """Simple shoulder-only versions of the cute gestures (this mesh has no elbows / hands)."""
+        self._gesture, self._gesture_t = name, 0.0
+
     def manipulate(self, zone: str, delta) -> None:
         """Drag a part: head tilts toward the drag, arms follow the cursor, body leans."""
         if zone in ("hand_l", "hand_r"):
@@ -392,6 +398,21 @@ class MeshCharacter:
                 goal[1 - i] = self.arm_rest - 0.5 + math.sin(t * 11) * 0.6 * ctx.struggle
             elif state == DRAG and ctx.grab.startswith("leg"):
                 goal[:] = -1.1 + np.array([1, -1]) * math.sin(t * 10) * 0.4 * ctx.struggle   # arms dangle "down"
+            elif state == FALL and ctx.jump:
+                goal[:] = -1.05                                    # arms up: "yay!"
+            elif self._gesture and state not in (DRAG, FALL, WALK):
+                self._gesture_t += dt
+                g, gt = self._gesture, self._gesture_t
+                if g == "heart":
+                    goal[:] = -1.3                                 # both arms up over her head
+                elif g == "nya":
+                    goal[:] = -0.15 + math.sin(gt * 7) * 0.15      # paws up near her shoulders
+                elif g == "kiss":
+                    goal[1] = 0.6 if gt < 0.9 else -0.2            # right arm: to her lips, then out
+                elif g in ("wave_l", "wave", "highfive_l"):
+                    goal[0] = -1.0 + math.sin(gt * 11) * 0.25
+                if gt > 2.4:
+                    self._gesture = None
             elif state in (DRAG, FALL):
                 goal[:] = math.radians(25) + math.sin(t * 9) * 0.15
             elif ctx.music:
@@ -417,7 +438,7 @@ class MeshCharacter:
         elif ctx.emotion == "hurt":
             ty = -35.0 if self.look[0] >= 0 else 35.0
         else:
-            ty = self.look[0] * 12
+            ty = self.look[0] * 12 + ctx.user_yaw
         self.yaw += (ty - self.yaw) * min(1.0, dt * 5)
         hop = 0.0
         if state == WALK:
@@ -430,7 +451,8 @@ class MeshCharacter:
         h = self.m.height
         piv = np.array([0, h * 0.85, 0])
         self._root = (translate(0, hop, 0) @ translate(*piv) @ rot_m4(q_axis((0, 0, 1), tilt)) @ translate(*-piv)
-                      @ rot_m4(q_axis((0, 1, 0), self.yaw)))
+                      @ rot_m4(q_mul(q_axis((0, 0, 1), ctx.knock_dir * 14 * ctx.knock), q_axis((1, 0, 0), -82 * ctx.knock)))
+                      @ rot_m4(q_axis((0, 1, 0), (self.yaw + ctx.spin) * (1 - ctx.knock))))
         half = WIDTH_M * h / 2
         self._vp = ortho(-half, half, -BOT_M * h, (1 + TOP_M) * h, -10, 10)
         self._pin_limb(ctx, dt)

@@ -13,5 +13,11 @@
     "backpack_nm",
     "backpack_plastic",
     "armgear_plastic"
-  ]
+  ],
+  "hair_physics": {
+    "stiffness_scale": 0.3,
+    "drag": 0.28,
+    "gravity": 0.35,
+    "wind": 0.6
+  }
 }

@@ -7,18 +7,19 @@ for setups where that native behaviour is unavailable.
 """
 from __future__ import annotations
 
+import math
 import random
 import time
 from collections import deque
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QBitmap, QCursor, QGuiApplication, QImage, QPainter, QRegion
+from PySide6.QtGui import QBitmap, QColor, QCursor, QGuiApplication, QImage, QPainter, QRegion
 from PySide6.QtWidgets import QApplication, QToolTip, QWidget
 
 from .config import Config
 from .expressions import EMOTION_MOOD, ExpressionEngine, build
-from .gestures import CLICK, HARD, LIMB_ALIAS, LIMBS, MOVE, PULL, SQUEEZE, GestureListener
-from .sprites import (DRAG, FALL, IDLE, PET, REACT, SIT, SLEEP, WALK, FrameContext,
+from .gestures import CLICK, DOUBLE, HARD, LIMB_ALIAS, LIMBS, MOVE, PULL, SQUEEZE, STROKE, GestureListener
+from .sprites import (DRAG, FALL, IDLE, KNOCK, PET, REACT, SIT, SLEEP, WALK, FrameContext,
                       load_sprites)
 
 TUGGABLE = {"hand_face", "hand_low", "hand_l", "hand_r", "scarf", "hair_l", "hair_r", "skirt"}
@@ -42,7 +43,7 @@ ZONE_HINTS = {
     "mouth": "Mouth: click = boop · hold = shush",
     "hand": "♡ Hand: drag = move her arm · drag far = lift her by the hand · double-click = hold hands",
     "leg": "Leg: drag = move her leg · drag far = lift her upside down",
-    "body": "Body: drag = make her lean · drag far = pick her up · hold = squeeze-hug",
+    "body": "Body: drag = make her lean · drag far = pick her up · hold = squeeze-hug · wheel = turn her",
     "sensitive": "Careful… gentle stroke = shy smile · sudden touch = flustered!",
 }
 
@@ -55,6 +56,20 @@ def _hint_group(zone):
             return group
     return {"chest": "sensitive", "skirt": "sensitive", "scarf": "hair"}.get(zone, zone)
 BREAK_FREE_AFTER = (4.0, 7.5)   # seconds dangling from a limb before she wriggles loose
+SMACK_SPEED = 1700.0            # px/s: the cursor hits her this fast -> she's knocked over
+TWIRL_TIME = 0.9
+CUTE_ACTIONS = ["jump", "hop_hop", "twirl", "nya", "heart", "kiss", "wave"]
+KNOCK_UP = 2.6                  # seconds lying down before she gets back up
+
+
+def _star(x: float, y: float, r: float):
+    from PySide6.QtGui import QPolygonF
+    pts = []
+    for i in range(10):
+        a = -math.pi / 2 + i * math.pi / 5
+        rr = r if i % 2 == 0 else r * 0.45
+        pts.append(QPointF(x + math.cos(a) * rr, y + math.sin(a) * rr))
+    return QPolygonF(pts)
 GRAVITY = 2600.0      # px/s^2
 TICK_MS = 33          # ~30 fps
 SLEEP_AFTER = 240.0   # seconds without interaction before she may nap
@@ -67,6 +82,9 @@ class CharacterWindow(QWidget):
     touched = Signal(str)            # zone name, e.g. "eye_l", "scarf:tug"
     picked_up = Signal(str)          # what she was grabbed by: hand_l, hand_r, leg_l, leg_r or body
     broke_free = Signal()            # she wriggled out of a limb grab
+    knocked = Signal()               # a hard hit knocked her over
+    cute = Signal(str)               # she did something cute (jump, twirl, nya, heart, kiss, wave)
+    got_up = Signal()                # ...and she's back on her feet
     dropped = Signal(float)          # impact speed
     double_clicked = Signal()
     menu_requested = Signal(QPoint)
@@ -103,7 +121,10 @@ class CharacterWindow(QWidget):
         self._press_zone: str | None = None
         self._hover_zone: str | None = None
         self._cursor_hist: deque[tuple[float, QPointF]] = deque(maxlen=40)
+        self._last_brush_t = 0.0
         self.sulking = False
+        self.user_pose: str | None = None    # "sit" while you've told her to sit
+        self._spin_left = 0.0
         self._press_local = QPointF()
         self._pulling = False
         self._manipulating = False
@@ -213,6 +234,8 @@ class CharacterWindow(QWidget):
 
     # ----------------------------------------------------------------- state machine
     def _set_state(self, state: str, duration: float | None = None, emotion: str | None = None) -> None:
+        if state != KNOCK:
+            self.ctx.knock = 0.0
         self.state = state
         self.ctx.state_t = 0.0
         if emotion:
@@ -232,8 +255,13 @@ class CharacterWindow(QWidget):
         left, right, _ = self._floor()
         a = max(0.0, min(1.0, self.cfg.activity))
         idle_for = time.monotonic() - self.last_interaction
-        if self.sulking:
+        if self.sulking or self.user_pose == "sit":
             self._set_state(SIT, duration=1e9)
+            return
+        cute_chance = 0.28 if self.mood_label in ("happy", "playful") else 0.1
+        if not (self.busy or self.talking or self.ctx.music) and random.random() < cute_chance:
+            self.do_cute(random.choice(CUTE_ACTIONS))
+            self.next_action = random.uniform(4, 8)
             return
         if self.busy or self.talking or self.ctx.music:
             self._set_state(IDLE, duration=3.0)   # stays put (and dances if music is on)
@@ -278,6 +306,12 @@ class CharacterWindow(QWidget):
         ctx.struggle += (base - ctx.struggle) * min(1.0, dt * (0.8 if self.state == DRAG else 3.0))
         if self.state == DRAG and ctx.grab and held > self._free_after:
             self._break_free()
+        if self._spin_left > 0:          # twirl: one full turn, eased
+            self._spin_left = max(0.0, self._spin_left - dt)
+            k = 1.0 - self._spin_left / TWIRL_TIME
+            ctx.spin = 360.0 * (k * k * (3 - 2 * k)) if self._spin_left > 0 else 0.0
+        if ctx.jump and self.state not in (FALL, DRAG):
+            ctx.jump = False
         mood = "sleepy" if self.state == SLEEP else self.mood_label
         ctx.expr = self.expressions.update(dt, mood, ctx.emotion if self._emotion_left > 0 else None)
         self._rub = max(0.0, self._rub - dt * 120)
@@ -321,6 +355,8 @@ class CharacterWindow(QWidget):
                             self.px <= left or self.px >= right:
                         self.px = max(left, min(right, self.px))
                         self._set_state(IDLE, duration=random.uniform(2, 5))
+            elif st == KNOCK:
+                self._update_knock()
             elif st in (PET, REACT) and self.next_action <= 0:
                 self._set_state(IDLE, duration=random.uniform(2, 5))
             if self.next_action <= 0 and self.state in (IDLE, SIT, WALK):
@@ -365,6 +401,17 @@ class CharacterWindow(QWidget):
         p = QPainter(self)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
         p.drawImage(0, 0, self._frame)
+        if self.state == KNOCK and 0.25 < self.ctx.state_t < KNOCK_UP:
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            r = self._head_rect_local()
+            cx, cy = r.center().x(), r.top() + r.height() * 0.15
+            for i in range(3):          # dizzy stars circling her head
+                a = self.ctx.t * 4.5 + i * 2.094
+                x, y = cx + math.cos(a) * r.width() * 0.55, cy + math.sin(a) * r.height() * 0.18
+                p.setPen(QColor("#e0a800"))
+                p.setBrush(QColor("#ffe066"))
+                p.drawPolygon(_star(x, y, 6.5))
         p.end()
 
     # ----------------------------------------------------------------- mouse
@@ -380,8 +427,52 @@ class CharacterWindow(QWidget):
         return "head" if self._head_rect_local().contains(pos) else "body"
 
     # mouse -> gesture listener ------------------------------------------------
+    def _approach(self) -> tuple[float, float]:
+        """Cursor speed (px/s) and horizontal velocity just before a press."""
+        now = time.perf_counter()
+        pts = [(t, q) for t, q in self._cursor_hist if now - t <= 0.09]
+        if len(pts) < 2:
+            return 0.0, 0.0
+        (t0, p0), (t1, p1) = pts[0], pts[-1]
+        dt = max(1e-3, t1 - t0)
+        return (p1 - p0).manhattanLength() / dt, (p1.x() - p0.x()) / dt
+
+    def knock_down(self, direction: float = 1.0) -> None:
+        """Too hard! She topples over, lies dizzy for a moment, then gets back up."""
+        if self.state in (DRAG, FALL, SLEEP, KNOCK):
+            return
+        self.ctx.knock_dir = direction
+        self._set_state(KNOCK, duration=KNOCK_UP + 1.0)
+        self.set_emotion("hurt", KNOCK_UP + 1.5)
+        self.knocked.emit()
+
+    def _update_knock(self) -> None:
+        t = self.ctx.state_t
+        if t < 0.35:                                   # falling
+            k = t / 0.35
+            self.ctx.knock = k * k
+        elif t < KNOCK_UP:                             # lying there, a little bounce on impact
+            self.ctx.knock = 1.0 - max(0.0, math.sin((t - 0.35) * 18) * math.exp(-(t - 0.35) * 8)) * 0.15
+        elif t < KNOCK_UP + 0.8:                       # getting back up
+            k = (t - KNOCK_UP) / 0.8
+            self.ctx.knock = 1.0 - k * k * (3 - 2 * k)
+        else:
+            self.ctx.knock = 0.0
+            self._set_state(IDLE, duration=3.0)
+            self.set_emotion("pout", 4.0)
+            self.got_up.emit()
+
     def _on_gesture(self, kind: str, zone: str) -> None:
         if self.state in (DRAG, FALL):
+            return
+        if self.state == KNOCK:
+            if kind in (DOUBLE, STROKE) and self.ctx.state_t < KNOCK_UP:
+                self.ctx.state_t = KNOCK_UP           # petting helps her back up
+            return
+        if kind == HARD:                               # squeezed far too hard: she falls over
+            self.touch(zone, "rough")
+            cx = self.width() / 2
+            self.knock_down(-1.0 if self._press_local.x() > cx else 1.0)
             return
         kinds = {CLICK: "gentle", HARD: "rough", SQUEEZE: "squeeze", MOVE: "move", PULL: "tug"}
         k = kinds.get(kind, "pet")
@@ -410,6 +501,12 @@ class CharacterWindow(QWidget):
         self._press_zone = self._zone_at(e.position())
         self._press_local = e.position()
         self.gestures.press(self._press_zone, e.globalPosition())
+        speed, vx = self._approach()
+        if speed > SMACK_SPEED and self.state not in (DRAG, FALL, KNOCK):
+            # the cursor slammed into her: a smack knocks her over
+            self.gestures.cancel()
+            self.touch(self._press_zone, "rough")
+            self.knock_down(1.0 if vx >= 0 else -1.0)
 
     def mouseMoveEvent(self, e) -> None:
         gp = e.globalPosition()
@@ -445,7 +542,15 @@ class CharacterWindow(QWidget):
                 self.moved.emit()
             return
 
-        # hovering: slowly stroking back and forth = petting; show what this part does
+        # hovering: the cursor brushes her hair aside; stroking back and forth = petting
+        if hasattr(self.sprites, "brush"):
+            now = time.perf_counter()
+            if self._last_hover is not None and now - self._last_brush_t < 0.2:
+                vel = (e.position() - self._last_hover) / max(1e-3, now - self._last_brush_t)
+            else:
+                vel = QPointF()
+            self._last_brush_t = now
+            self.sprites.brush(e.position(), vel)
         zone = self._zone_at(e.position())
         soft = zone in STROKE_HOVER
         self.setCursor(Qt.CursorShape.OpenHandCursor if zone != "body" or soft else Qt.CursorShape.ArrowCursor)
@@ -545,6 +650,8 @@ class CharacterWindow(QWidget):
         self.menu_requested.emit(e.globalPos())
 
     def leaveEvent(self, _e) -> None:
+        if hasattr(self.sprites, "brush"):
+            self.sprites.brush(None, None)
         self._last_hover = None
         self._hover_zone = None
         QToolTip.hideText()
@@ -593,6 +700,79 @@ class CharacterWindow(QWidget):
         self.touched.emit(f"{zone}:{kind}")
         if zone == "body":
             self.poked.emit()
+
+    # ----------------------------------------------------------------- poses you control / cute actions
+    def wheelEvent(self, e) -> None:
+        """Mouse wheel over her: turn her around."""
+        steps = e.angleDelta().y() / 120.0
+        yaw = self.ctx.user_yaw + steps * 20.0
+        self.ctx.user_yaw = (yaw + 180.0) % 360.0 - 180.0
+        self.last_interaction = time.monotonic()
+        if not getattr(self.sprites, "mirrors_itself", False) and abs(steps) >= 1:
+            self.ctx.facing_left = abs(self.ctx.user_yaw) > 90      # 2D characters just flip
+        if self.state == WALK:
+            self._set_state(IDLE, duration=5)
+
+    def rotate_by(self, degrees: float) -> None:
+        self.ctx.user_yaw = (self.ctx.user_yaw + degrees + 180.0) % 360.0 - 180.0
+        if not getattr(self.sprites, "mirrors_itself", False):
+            self.ctx.facing_left = abs(self.ctx.user_yaw) > 90
+
+    def face_me(self) -> None:
+        self.ctx.user_yaw = 0.0
+        if not getattr(self.sprites, "mirrors_itself", False):
+            self.ctx.facing_left = False
+
+    def sit_down(self) -> None:
+        self.user_pose = "sit"
+        if self.state not in (DRAG, FALL, KNOCK):
+            self._set_state(SIT, duration=1e9)
+
+    def stand_up(self) -> None:
+        self.user_pose = None
+        if self.state in (SIT, SLEEP):
+            self._set_state(REACT, duration=1.0)
+
+    def jump(self, power: float = 1.0) -> None:
+        """A real jump: up she goes (gravity brings her down), arms up, 'Yay~!'."""
+        if self.state in (DRAG, FALL, KNOCK, SLEEP):
+            return
+        self.user_pose = None
+        self.ctx.jump = True
+        self.vy = -950.0 * power
+        self.vx = 0.0
+        self.py -= 2                      # leave the ground so physics takes over
+        self._set_state(FALL)
+        self.set_emotion("happy", 3.0)
+
+    def twirl(self) -> None:
+        if self.state in (DRAG, FALL, KNOCK):
+            return
+        self._spin_left = TWIRL_TIME
+        self._set_state(REACT, duration=TWIRL_TIME + 0.4)
+        self.set_emotion("happy", 3.0)
+
+    def do_cute(self, name: str) -> None:
+        """jump, twirl, nya, heart, kiss, wave, hop_hop."""
+        if self.state in (DRAG, FALL, KNOCK, SLEEP):
+            return
+        s = self.sprites
+        if name == "jump":
+            self.jump()
+        elif name == "hop_hop":
+            self.jump(0.55)
+            QTimer.singleShot(800, lambda: self.jump(0.55))
+        elif name == "twirl":
+            self.twirl()
+        elif name in ("nya", "heart", "kiss", "wave"):
+            g = "wave_l" if name == "wave" else name
+            if hasattr(s, "start_gesture"):
+                self._set_state(IDLE, duration=4.0)
+                s.start_gesture(g)
+            else:
+                self.jump(0.5)               # 2D characters: a happy little hop instead
+            self.set_emotion({"nya": "playful", "heart": "shy", "kiss": "shy"}.get(name, "happy"), 3.5)
+        self.cute.emit(name)
 
     # ----------------------------------------------------------------- attention-seeking moves
     def walk_to_cursor(self) -> float:

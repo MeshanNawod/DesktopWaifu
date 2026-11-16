@@ -141,10 +141,20 @@ uniform int uOutlinePass;
 uniform vec3 uOutlineColor;
 uniform mat3 uUVXf;
 uniform float uRealism;
+uniform vec4 uColorize;
+uniform float uColorLift;
 out vec4 frag;
+vec3 recolor(vec3 c) {
+    if (uColorize.a <= 0.0) return c;
+    float l = dot(c, vec3(0.299, 0.587, 0.114));
+    // keep the texture's shading but move it to the target colour; uColorLift brightens dark textures
+    vec3 tinted = clamp(uColorize.rgb * mix(uColorLift, 1.0, l), 0.0, 1.0);
+    return mix(c, tinted, uColorize.a);
+}
 void main() {
     vec2 uv = (uUVXf * vec3(vUV, 1.0)).xy;
     vec4 tex = uHasTex == 1 ? texture(uTex, uv) : vec4(1.0);
+    tex.rgb = recolor(tex.rgb);
     vec4 base = uColor * tex;
     if (uAlphaMode == 1 && base.a < uCutoff) discard;
     if (uAlphaMode == 0) base.a = 1.0;
@@ -161,7 +171,7 @@ void main() {
         float nl = dot(n, uLightDir) + uShadeShift;
         float t = clamp(uShadeToony, 0.0, 0.999);
         float shading = clamp((nl - (-1.0 + t)) / max(1e-3, (1.0 - t) - (-1.0 + t)), 0.0, 1.0);
-        vec3 shadeTex = uHasShadeTex == 1 ? texture(uShadeTex, uv).rgb : tex.rgb;
+        vec3 shadeTex = uHasShadeTex == 1 ? recolor(texture(uShadeTex, uv).rgb) : tex.rgb;
         vec3 shade = uShade * shadeTex;
         col = mix(shade, base.rgb, shading);
         col = mix(col, base.rgb, 0.12);           // a little ambient light
@@ -432,6 +442,9 @@ class VrmRenderer:
             gl.glUniform1i(self.loc("uUnlit"), 1 if mat.unlit else 0)
             gl.glUniform1f(self.loc("uShadeShift"), mat.shade_shift)
             gl.glUniform1f(self.loc("uShadeToony"), mat.shade_toony)
+            cz = mat.colorize or [0.0, 0.0, 0.0, 0.0]
+            gl.glUniform4f(self.loc("uColorize"), *[float(v) for v in cz[:4]])
+            gl.glUniform1f(self.loc("uColorLift"), float(cz[4]) if len(cz) > 4 else 0.6)
             gl.glUniformMatrix3fv(self.loc("uUVXf"), 1, gl.GL_TRUE, mat.uv_xf.astype(np.float32))
             gl.glDepthMask(gl.GL_TRUE if mat.zwrite else gl.GL_FALSE)
             gl.glBindVertexArray(g.vao)

@@ -99,6 +99,10 @@ class WaifuApp(QObject):
         c.moved.connect(self._follow)
         c.touched.connect(self.on_touch)
         c.picked_up.connect(self._on_pickup)
+        c.cute.connect(lambda name: (setattr(self, "_last_quip", 0.0),
+                                     self._quip(f"cute_{name}", "happy", chance=0.85)))
+        c.knocked.connect(lambda: (setattr(self, "_last_quip", 0.0), self._quip("knocked", "hurt")))
+        c.got_up.connect(lambda: (setattr(self, "_last_quip", 0.0), self._quip("get_up", "pout")))
         c.broke_free.connect(lambda: (self.emotion.released(), setattr(self, "_last_quip", 0.0),
                                       self._quip("broke_free", "playful")))
         c.dropped.connect(self._on_drop)
@@ -584,6 +588,23 @@ class WaifuApp(QObject):
         else:
             m.addAction("💤 Go to sleep", lambda: (self._quip("fall_asleep", "sleepy"),
                                                    QTimer.singleShot(1500, self.emotion.sleep)))
+        pose = m.addMenu("🧸 Pose & cute")
+        c = self.character
+        sitting = c.user_pose == "sit"
+        pose.addAction("🧍 Stand up" if sitting else "🪑 Sit down",
+                       (lambda: (c.stand_up(), self._quip("stand_up", "happy"))) if sitting else
+                       (lambda: (c.sit_down(), self._quip("sit_down", "happy"))))
+        pose.addAction("⬆ Jump!", lambda: c.do_cute("jump"))
+        pose.addAction("🐰 Hop hop", lambda: c.do_cute("hop_hop"))
+        pose.addAction("💃 Twirl", lambda: c.do_cute("twirl"))
+        pose.addAction("🐱 Nya~ (cat paws)", lambda: c.do_cute("nya"))
+        pose.addAction("💖 Heart", lambda: c.do_cute("heart"))
+        pose.addAction("💋 Blow a kiss", lambda: c.do_cute("kiss"))
+        pose.addAction("👋 Wave", lambda: c.do_cute("wave"))
+        pose.addSeparator()
+        pose.addAction("↻ Turn around", lambda: (c.rotate_by(180), self._quip("turned", "surprised")))
+        pose.addAction("↺ Turn a little", lambda: c.rotate_by(45))
+        pose.addAction("🙂 Face me", c.face_me)
         chars = m.addMenu("👗 Character")
         cur_path = (self.cfg.vrm_path or default_vrm()).lower()
         for label, style, path in list_characters():

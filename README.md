@@ -17,6 +17,8 @@ listens to music with you and talks out loud. Her brain is Google Gemini, with a
 - [Characters](#characters)
 - [Touch and gestures](#touch-and-gestures)
 - [She learns about you and seeks your attention](#she-learns-about-you-and-seeks-your-attention)
+- [Poses, jumping and cute actions](#poses-jumping-and-cute-actions)
+- [Hair physics, wind and knock-downs](#hair-physics-wind-and-knock-downs)
 - [Lifting by a limb and struggling](#lifting-by-a-limb-and-struggling)
 - [64 expressions and moods](#64-expressions-and-moods)
 - [Graceful movement and gestures](#graceful-movement-and-gestures)
@@ -48,6 +50,7 @@ listens to music with you and talks out loud. Her brain is Google Gemini, with a
 
 | Character | Type | What makes her special |
 |---|---|---|
+| **Seed-chan ♡** | 3D VRM variant (`assets/models/Seed-chan.variant.json`) | The cute one: pink hair, pastel outfit, violet sparkly eyes, a slightly bigger head, **cat ears and a bow** that follow her head, soft blush, extra-floppy hair and all the Seed-san 2 movement |
 | **Futuristic Girl** | 3D FBX (`assets/models/FuturisticGirl/`) | Detailed scanned mesh, animated procedurally in the shader: head and gaze tracking, shoulder-jointed arms (relaxed from the T-pose), breathing, and spring-wobble physics of the whole body |
 | **Seed-san 2** | 3D VRM, realistic mode | Soft lighting, rim light, contact shadow, weight-shift idle, eye micro-movements, curled fingers, idle gestures, waving and high fives |
 | **Seed-san** | 3D VRM (backpack hidden via `Seed-san.json`) | Fully rigged: walking legs, sitting on the taskbar edge, spring-bone hair and cloth, facial blend shapes |
@@ -55,6 +58,9 @@ listens to music with you and talks out loud. Her brain is Google Gemini, with a
 | **Drawn girls** | 2D vector | Lightweight, with no assets needed |
 
 ![Live picture physics](docs/images/live_picture.png)
+
+**Make your own variant:** copy `Seed-chan.variant.json`, then change the `colorize` colours (`[r, g, b, strength, brightness]`
+per material), the `bone_scale`, the `accessories` (`cat_ears`, `bow`), the `blush` and the `hair_physics`. It shows up in the Character menu.
 
 **Add your own:**
 - Drop a `.vrm` into `assets/models/` (VRoid Studio → *Export VRM*). Every VRM also gets a realistic "2" version.
@@ -99,6 +105,30 @@ cheeks, hands, legs, body, chest and skirt. Hover over a part and a small hint p
 - **She learns your habits:** your usual hours at the PC, your favourite ways to interact (headpats, squishing,
   moving her around…), what gets your attention, and facts from your chats. All of this goes into Gemini's
   context, so her personality, topics and timing adapt to you.
+
+## Poses, jumping and cute actions
+
+| How | What she does |
+|---|---|
+| **Mouse wheel** over her | **turns her around** (and she stays turned) |
+| Right-click → **🧸 Pose & cute** → Sit down / Stand up | she sits on the taskbar edge with her legs dangling, until you stand her up |
+| … → Jump! / Hop hop | a real **jump** with gravity, arms up: "Yay~!" |
+| … → Twirl | spins all the way around: "Ta-da~ ♪" |
+| … → Nya~ / Heart / Blow a kiss / Wave | **cat paws** by her face, **heart arms** over her head, a **kiss** with a flying ♡, a wave |
+| … → Turn around / Face me | turns her back to you, or toward you again |
+| On her own | when she's happy or playful she does these cute things by herself every now and then |
+
+![Rotate, sit, jump, twirl, nya, heart, kiss](docs/images/cute_poses.png)
+
+## Hair physics, wind and knock-downs
+
+- **Hair** is soft, floppy spring physics. It swings when she moves, turns or gets dragged, sways in a **breeze with gusts**,
+  is **pushed aside when your cursor brushes through it** (just hovering, no click), and you can grab and pull a whole lock.
+- **Touch her too hard**, either a fast **smack** (the cursor slams into her) or a squeeze held far too long, and she's **knocked over**.
+  She topples backwards, lies dizzy with **stars circling her head**, then gets back up pouting
+  ("Owww… the world is spinning…" / "Hmph! That was mean!"). Petting her helps her up sooner.
+
+![Seed-chan, hair, knock-downs](docs/images/knockdown_hair.png)
 
 ## Lifting by a limb and struggling
 

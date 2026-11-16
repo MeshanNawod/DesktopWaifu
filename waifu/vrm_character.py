@@ -13,9 +13,9 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap, QRadialGradient
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPixmap, QRadialGradient
 
-from .sprites import DRAG, FALL, IDLE, PET, REACT, SIT, SLEEP, WALK, FrameContext, _heart, _pen, draw_steam
+from .sprites import DRAG, FALL, IDLE, KNOCK, PET, REACT, SIT, SLEEP, WALK, FrameContext, _heart, _pen, draw_steam
 from .vrm.math3d import (IDENTITY_Q, normalize, ortho, q_axis, q_euler, q_from_vectors, q_inv,
                          q_mul, q_rotate, q_slerp, q_to_m3, rot_m4, translate)
 from .vrm.model import R180, VrmModel
@@ -46,13 +46,36 @@ def _rz(d): return q_axis((0, 0, 1), d)
 # ---------------------------------------------------------------------------- gestures (Seed-san 2)
 # Canonical VRM 1.0 frame: she faces +Z, her left arm points +X in the T-pose.
 # Left arm: _rz(+) raises, _rz(-) lowers.  Right arm: mirrored.  Forearm forward: left _ry(-), right _ry(+).
-GESTURE_LEN = {"wave_l": 2.4, "wave_r": 2.4, "stretch": 3.2, "look_around": 3.4, "hands_behind": 4.5,
+GESTURE_LEN = {"nya": 2.4, "heart": 2.6, "kiss": 2.0, "wave_l": 2.4, "wave_r": 2.4, "stretch": 3.2, "look_around": 3.4, "hands_behind": 4.5,
                "hair_touch": 2.6, "highfive_l": 1.6, "highfive_r": 1.6, "explain": 2.2, "cheer": 2.0,
                "shy_hands": 4.0}
 
 
+def _arm_pair(ux, uy, uz, ly, lz) -> dict:
+    """Left-arm angles (solved numerically) plus the mirrored right arm."""
+    return {"leftUpperArm": q_mul(q_mul(_rx(ux), _ry(uy)), _rz(uz)), "leftLowerArm": q_mul(_ry(ly), _rz(lz)),
+            "rightUpperArm": q_mul(q_mul(_rx(ux), _ry(-uy)), _rz(-uz)), "rightLowerArm": q_mul(_ry(-ly), _rz(-lz))}
+
+
 def gesture_pose(name: str, gt: float) -> dict[str, np.ndarray]:
     w = math.sin(gt * 11)
+    if name == "nya":          # cat paws beside her face, head tilted: "Nya~"
+        P = _arm_pair(-70, -60, -60, -150, 30)
+        paw = math.sin(gt * 7) * 18
+        P.update({"leftHand": _rz(-35 + paw), "rightHand": _rz(35 - paw), "head": _rz(10 * math.sin(gt * 3)),
+                  "spine": _rz(math.sin(gt * 3) * 4)})
+        return P
+    if name == "heart":        # both arms making a heart over her head
+        P = _arm_pair(0, -60, 60, -75, 60)
+        P.update({"head": _rz(math.sin(gt * 2.5) * 6), "spine": _rz(math.sin(gt * 2.5) * 3)})
+        return P
+    if name == "kiss":         # blows a kiss: fingers to her lips, then the hand flies out
+        if gt < 0.9:
+            P = {k: v for k, v in _arm_pair(10, -60, 50, -135, 15).items() if k.startswith("right")}
+        else:
+            P = {"rightUpperArm": q_mul(_rx(-55), _rz(25)), "rightLowerArm": _ry(15), "rightHand": _rx(-20)}
+        P["head"] = _rz(-8)
+        return P
     if name in ("wave_l", "wave_r"):
         s, side = (1, "left") if name == "wave_l" else (-1, "right")
         return {f"{side}UpperArm": q_mul(_rx(-15), _rz(s * -15)),
@@ -107,11 +130,16 @@ def gesture_for(face: str, emotion: str) -> str:
 class VrmCharacter:
     mirrors_itself = True
 
-    def __init__(self, path: str | Path, scale: float, dpr: float, enhanced: bool = False):
-        self.enhanced = enhanced
+    def __init__(self, path: str | Path, scale: float, dpr: float, enhanced: bool = False,
+                 variant: dict | None = None):
+        self.variant = variant or {}
+        self.enhanced = enhanced or bool(self.variant.get("enhanced"))
         self._grab_blend = 0.0
         self._grab_last = None
         self._pin_M = None
+        self._brush = None           # cursor brushing through her hair
+        self._gust = 0.0
+        self._next_gust = 4.0
         self._move_head = None       # (dx, dy) while you drag her face
         self._move_body = None       # (dx, dy) while you drag her body
         self._move_leg = None        # (zone, cursor point) while you drag a leg
@@ -129,7 +157,7 @@ class VrmCharacter:
         self._next_saccade = 1.0
         self._cursor_far = True
         self._last_wave = -99.0
-        self.m = m = VrmModel(path)
+        self.m = m = VrmModel(path, self.variant or None)
         self.k = m.height / 1.58                       # size relative to a typical 1.58 m avatar
         self.fig_px = round(300 * max(0.4, min(3.0, scale)))
         self.ppm = self.fig_px / m.height              # logical px per metre
@@ -137,7 +165,8 @@ class VrmCharacter:
         self.H = round((1 + TOP_M + BOT_M) * m.height * self.ppm)
         self.dpr = dpr
         self.gl = VrmRenderer(m, round(self.W * dpr), round(self.H * dpr), realism=1.0 if enhanced else 0.0)
-        self.springs = SpringSystem(m)
+        head = m.humanoid.get("head")
+        self.springs = SpringSystem(m, m.descendants(head) if head is not None else set())
         self.hair_springs, self.cloth_springs = self._classify_springs()
 
         self.t = 0.0
@@ -292,6 +321,9 @@ class VrmCharacter:
     def react(self, zone: str, kind: str = "tap") -> None:
         side = random.choice((-1.0, 1.0))
         self._jelly_v += 3.0 if kind in ("pet", "squeeze", "gentle") else 5.0
+        hair = [j for j in self.springs.joints if id(j) in self.hair_springs]
+        flick = 0.03 if kind in ("pet", "gentle", "squeeze") else 0.07
+        self.springs.kick(hair, self._canon((side * flick, flick * 0.6, flick * 0.5)))
         if kind == "squeeze":
             self.timers["blush"] = 3.0
             self.timers["puni"] = 1.0
@@ -361,12 +393,18 @@ class VrmCharacter:
             return
         if not self._pinned:
             p = self._press_local
-            self._pinned = self.springs.tails_near(self.project, (p.x(), p.y()), 40)
-            for j in self._pinned:
+            radius = 110 if zone.startswith("hair") else 45
+            near = self.springs.tails_near(self.project, (p.x(), p.y()), radius)
+            if zone.startswith("hair"):
+                near = [j for j in near if id(j) in self.hair_springs] or near
+            for j in near:
+                sx, sy = self.project(j.cur)
                 j.grab = j.cur.copy()
-        d = np.array([delta.x(), -delta.y(), 0.0]) / self.ppm * 0.8
+                j.grab_w = max(0.25, 1.0 - math.hypot(sx - p.x(), sy - p.y()) / radius)   # nearer = follows more
+            self._pinned = near
+        d = np.array([delta.x(), -delta.y(), 0.0]) / self.ppm
         for j in self._pinned:
-            j.pin = j.grab + d
+            j.pin = j.grab + d * getattr(j, "grab_w", 1.0)
 
     # ------------------------------------------------------------------ animation
     def _pose_targets(self, state: str, ctx: FrameContext) -> tuple[dict, np.ndarray]:
@@ -437,6 +475,24 @@ class VrmCharacter:
                 add(f"{side}UpperLeg", _rx(swing))
                 add(f"{side}LowerLeg", _rx(12 + math.sin(t * 5 + sgn + 1) * 8))
             add("head", _rx(10))
+        elif state == KNOCK:
+            k, ts = ctx.knock, ctx.state_t
+            falling = ts < 0.35
+            for side, sgn in (("left", 1), ("right", -1)):
+                if falling:   # arms flail up as she tips over
+                    P[f"{side}UpperArm"] = _rz(sgn * (40 + math.sin(t * 16 + sgn) * 25))
+                else:         # lying: arms spread out, knees a little bent
+                    P[f"{side}UpperArm"] = q_mul(_rx(20), _rz(sgn * -35))
+                    P[f"{side}LowerArm"] = _ry(sgn * -20)
+                add(f"{side}UpperLeg", _rx(-18 * k + math.sin(t * 2 + sgn) * 3))
+                add(f"{side}LowerLeg", _rx(25 * k))
+            add("head", _rz(math.sin(t * 3.0) * 12 * k))      # dizzy head roll
+        elif state == FALL and ctx.jump:
+            for side, sgn in (("left", 1), ("right", -1)):
+                P[f"{side}UpperArm"] = _rz(sgn * 62)
+                P[f"{side}LowerArm"] = _rz(sgn * 15)
+                add(f"{side}UpperLeg", _rx(-35))
+                add(f"{side}LowerLeg", _rx(70))
         elif state == FALL:
             for side, sgn in (("left", 1), ("right", -1)):
                 P[f"{side}UpperArm"] = _rz(sgn * (35 + math.sin(t * 14 + sgn) * 15))
@@ -480,6 +536,8 @@ class VrmCharacter:
 
         if self.enhanced:
             self._enhanced_pose(P, hip, state, ctx, add)
+        elif self.gesture and state in (IDLE, REACT, PET, SIT):
+            self._blend_gesture(P)
         if state not in (DRAG, FALL):
             self._manip_pose(P, add)
 
@@ -512,6 +570,55 @@ class VrmCharacter:
                 P[f"{side}LowerArm"] = _ry(-8 if side == "left" else 8)
         return P, hip
 
+    # ------------------------------------------------------------------ cute accessories (variants)
+    def _head_point(self, v) -> np.ndarray:
+        """A point given in the head's own (canonical) frame -> world, following every head movement."""
+        hi = self.m.humanoid.get("head")
+        hc = self._head_center()
+        if hi is None or self._W is None:
+            return hc + self._canon(v)
+        from .vrm.math3d import m3_to_q
+        q = q_mul(m3_to_q(self._W[hi][:3, :3]), q_inv(self.m.rest_world_rot[hi]))
+        if self.m.version == 0:
+            q = q_mul(q, R180)
+        scale = float(self.variant.get("bone_scale", {}).get("head", 1.0))
+        return hc + q_rotate(q, np.asarray(v, float) * self.k * scale)
+
+    def _draw_accessories(self, p: QPainter) -> None:
+        acc = self.variant.get("accessories", [])
+        if not acc:
+            return
+        from PySide6.QtGui import QPolygonF
+        col = QColor(self.variant.get("accessory_color", "#f7a3c6"))
+        line = col.darker(150)
+        if "cat_ears" in acc:
+            for sx in (1, -1):
+                base_a = self.project(self._head_point((sx * 0.025, 0.105, -0.01)))
+                base_b = self.project(self._head_point((sx * 0.085, 0.075, -0.01)))
+                tip = self.project(self._head_point((sx * 0.08, 0.175, -0.015)))
+                p.setPen(_pen(line, 1.3))
+                p.setBrush(col)
+                p.drawPolygon(QPolygonF([QPointF(*base_a), QPointF(*tip), QPointF(*base_b)]))
+                inner = [QPointF(base_a[0] * 0.7 + tip[0] * 0.3 + (base_b[0] - base_a[0]) * 0.18,
+                                 base_a[1] * 0.7 + tip[1] * 0.3 + (base_b[1] - base_a[1]) * 0.18),
+                         QPointF(tip[0] * 0.8 + (base_a[0] + base_b[0]) * 0.1, tip[1] * 0.8 + (base_a[1] + base_b[1]) * 0.1),
+                         QPointF(base_b[0] * 0.7 + tip[0] * 0.3 - (base_b[0] - base_a[0]) * 0.18,
+                                 base_b[1] * 0.7 + tip[1] * 0.3 - (base_b[1] - base_a[1]) * 0.18)]
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor("#ffd6e7"))
+                p.drawPolygon(QPolygonF(inner))
+        if "bow" in acc:
+            cx, cy = self.project(self._head_point((0.075, 0.07, 0.035)))
+            s = 0.022 * self.k * self.ppm
+            p.setPen(_pen(QColor("#c2185b"), 1.0))
+            p.setBrush(QColor("#ff5c8a"))
+            for dx in (-1, 1):
+                path = QPainterPath()
+                path.moveTo(cx, cy)
+                path.cubicTo(cx + dx * s * 1.6, cy - s * 1.2, cx + dx * s * 1.9, cy + s * 1.1, cx, cy)
+                p.drawPath(path)
+            p.drawEllipse(QPointF(cx, cy), s * 0.35, s * 0.35)
+
     # ------------------------------------------------------------------ touch & move every part
     def manipulate(self, zone: str, delta) -> None:
         """You drag one part of her: that part follows the cursor (None = let go, it springs back)."""
@@ -529,6 +636,31 @@ class VrmCharacter:
             self._move_body = None if delta is None else (delta.x(), delta.y())
         if delta is None:
             self._jelly_v += 2.0
+
+    def brush(self, local, vel) -> None:
+        """The cursor passing through her hair pushes the strands aside (and drags them along)."""
+        self._brush = None if local is None else (QPointF(local), QPointF(vel) if vel is not None else QPointF())
+
+    def _apply_brush(self) -> None:
+        if not self._brush or self._W is None:
+            return
+        pt, vel = self._brush
+        self._brush = None                      # one push per mouse move
+        radius = 0.11 * self.k * self.ppm
+        speed = min(2500.0, (vel.x() ** 2 + vel.y() ** 2) ** 0.5)
+        for j in self.springs.joints:
+            if id(j) not in self.hair_springs or j.pin is not None:
+                continue
+            sx, sy = self.project(j.cur)
+            dx, dy = sx - pt.x(), sy - pt.y()
+            dist = (dx * dx + dy * dy) ** 0.5
+            if dist > radius:
+                continue
+            w = (1.0 - dist / radius) ** 1.5
+            away = np.array([dx, -dy, 0.0]) / max(dist, 1.0)          # pushed away from the cursor...
+            drag = np.array([vel.x(), -vel.y(), 0.0]) / max(speed, 1.0)  # ...and swept along with it
+            push = (away * 0.012 + drag * min(1.0, speed / 900.0) * 0.02) * w * self.k
+            j.cur = j.cur + push                # prev stays put -> the strand gains momentum
 
     def squeeze(self, local) -> None:
         """Hold on a spot: it squishes. None = let go (springs back with a little boing)."""
@@ -662,6 +794,10 @@ class VrmCharacter:
             add("head", _rx(-abs(math.cos(ph)) * 2))
         # gestures (blend in/out smoothly)
         if self.gesture and state in (IDLE, REACT, PET, SIT):
+            self._blend_gesture(P)
+
+    def _blend_gesture(self, P: dict) -> None:
+        if True:
             length = GESTURE_LEN.get(self.gesture, 2.0)
             env = max(0.0, min(1.0, self.gesture_t / 0.35, (length - self.gesture_t) / 0.4))
             env = env * env * (3 - 2 * env)
@@ -767,6 +903,10 @@ class VrmCharacter:
         ex = ctx.expr
         if self.enhanced:
             self._update_gestures(dt, state, ctx)
+        elif self.gesture:
+            self.gesture_t += dt
+            if self.gesture_t >= GESTURE_LEN.get(self.gesture, 2.0) or state in (DRAG, FALL, WALK, SLEEP):
+                self.gesture = None
         for i in (0, 1):
             goal = self._look_target[i]
             if ex is not None:   # gaze from the expression matrix (side glances, shy downcast...)
@@ -788,9 +928,9 @@ class VrmCharacter:
         elif ctx.emotion == "hurt":
             target_yaw = -40.0 if self.look[0] >= 0 else 40.0   # turns away from you, sulking
         elif state in (SIT, SLEEP):
-            target_yaw = 8.0
+            target_yaw = 8.0 + ctx.user_yaw
         else:
-            target_yaw = self.look[0] * 14
+            target_yaw = self.look[0] * 14 + ctx.user_yaw
         self.yaw += (target_yaw - self.yaw) * min(1.0, dt * 6)
         tilt = -ctx.tilt * 0.6 if state == DRAG and not ctx.grab else 0.0
         if ctx.grab:
@@ -803,7 +943,8 @@ class VrmCharacter:
         self._root_rot = q_root
         pivot = np.array([0.0, self.m.height * 0.82, 0.0])
         root = (translate(*self.off) @ translate(*pivot) @ rot_m4(_rz(tilt)) @ translate(*-pivot)
-                @ translate(0, hop, 0) @ rot_m4(_ry(self.yaw)))
+                @ translate(0, hop, 0) @ rot_m4(q_mul(_rz(ctx.knock_dir * 14 * ctx.knock), _rx(-82 * ctx.knock)))
+                @ rot_m4(_ry((self.yaw + ctx.spin) * (1 - ctx.knock))))
         self._update_squish(dt)
         j = max(-0.6, min(0.6, self._jelly))
         S = np.diag([1 - j * 0.035, 1 + j * 0.06, 1 - j * 0.035, 1.0])
@@ -835,8 +976,18 @@ class VrmCharacter:
         W = self._limb_pin(W, ctx, dt)          # lifted by a hand/leg: hang from it under the cursor
         pin = getattr(self, "_pin_M", None)
         n = 1 if dt <= 0.04 else 2
+        # breeze with occasional gusts that make her hair flutter
+        self._next_gust -= dt
+        if self._next_gust <= 0:
+            self._gust = random.uniform(2.0, 3.5) * random.choice((-1, 1))
+            self._next_gust = random.uniform(5.0, 11.0)
+        self._gust *= max(0.0, 1.0 - dt * 0.9)
+        flutter = math.sin(self.t * 9.0) * 0.35 * abs(self._gust)
+        wind = self._canon((math.sin(self.t * 1.3) * 0.9 + math.sin(self.t * 3.1) * 0.35 + self._gust,
+                            0.15 + flutter * 0.3, math.cos(self.t * 0.9) * 0.7 + flutter))
+        self._apply_brush()
         for _ in range(n):
-            self.springs.update(W, dt / n)
+            self.springs.update(W, dt / n, wind)
         W2 = m.world_matrices(root)
         self._W = pin[None] @ W2 if pin is not None else W2
         self._expressions(state, ctx, dt)
@@ -887,11 +1038,14 @@ class VrmCharacter:
         t = ctx.t
         hc = self._head_center()
         blush = {"shy": 0.8, "flustered": 1.0, "happy": 0.35, "excited": 0.4, "playful": 0.3}.get(ctx.emotion, 0.0)
+        blush = max(blush, float(self.variant.get("blush", 0.0)))
+        self._draw_accessories(p)
         if ctx.expr is not None:
             blush = max(blush, ctx.expr.blush)
         if state == PET or self.timers["blush"] > 0:
             blush = 0.9
-        if ctx.expr is not None and ctx.expr.sparkle:
+        if (ctx.expr is not None and ctx.expr.sparkle) or (self.variant.get("sparkle_eyes") and state != SLEEP
+                                                            and not ctx.blink and self.timers["eye_shut"] <= 0):
             for sx in (1, -1):
                 x, y = self.project(hc + self._canon((sx * 0.03, 0.0, 0.08)))
                 tw = 0.6 + 0.4 * math.sin(t * 8 + sx)
@@ -909,6 +1063,12 @@ class VrmCharacter:
                 p.setBrush(g)
                 p.drawEllipse(QPointF(cx, cy), r, r * 0.6)
         top = self.project(hc + self._canon((0, 0.13, 0)))
+        if self.gesture == "kiss" and self.gesture_t > 0.9:
+            ph = min(1.0, (self.gesture_t - 0.9) / 1.0)
+            mx, my = self.project(self._head_center() + self._canon((-0.02, -0.06, 0.08)))
+            col = QColor("#ff5c7a")
+            col.setAlphaF(1 - ph * 0.8)
+            _heart(p, mx - ph * 40, my - ph * 30, 10 + ph * 8, col)
         if self.timers["puni"] > 0:
             ph = 1 - self.timers["puni"]
             x, y = self.project(self._sq_center)

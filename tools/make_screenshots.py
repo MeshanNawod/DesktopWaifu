@@ -116,6 +116,9 @@ def save(img: QImage, p: QPainter, name: str) -> None:
 # ------------------------------------------------------------------ characters
 print("loading characters…")
 seed = VrmCharacter(SEED, 1.0, DPR)
+import json as _json
+_var = _json.loads((ROOT / "assets" / "models" / "Seed-chan.variant.json").read_text(encoding="utf-8"))
+chan = VrmCharacter(SEED, 1.0, DPR, variant=_var)
 seed2 = VrmCharacter(SEED, 1.0, DPR, enhanced=True)
 fut = MeshCharacter(FUTURE, 1.0, DPR)
 pic = LiveImageCharacter(DEFAULT_IMAGE_PACK, 1.0, DPR)
@@ -129,7 +132,7 @@ ground = H - TASKBAR
 cast = [
     (fut, "Futuristic Girl (3D FBX)", FrameContext(emotion="happy", expr=build("direct", "gentle_smile"))),
     (seed2, "Seed-san 2 (3D VRM)", FrameContext(emotion="happy", expr=build("sparkle", "beaming"))),
-    (seed, "Seed-san (3D VRM)", FrameContext(expr=build("direct", "gentle_smile"))),
+    (chan, "Seed-chan ♡ (cute)", FrameContext(emotion="happy", expr=build("sparkle", "beaming"))),
     (pic, "Live picture", FrameContext(emotion="shy", expr=build("downcast", "blush"))),
     (drawn, "Drawn: scarf girl", FrameContext(emotion="happy")),
     (classic, "Drawn: classic", FrameContext(emotion="excited")),
