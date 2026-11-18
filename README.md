@@ -4,6 +4,11 @@
 reacts to every touch on every part of her body. She remembers you, sees you through the webcam,
 listens to music with you and talks out loud. Her brain is Google Gemini, with an optional offline local model.
 
+<p align="center">
+  <a href="https://meshannawod.github.io/desktop-waifu/"><img src="https://img.shields.io/badge/Website-Open-2ea44f?style=for-the-badge&logo=githubpages&logoColor=white" alt="Website"></a>
+  <a href="https://github.com/MeshanNawod/desktop-waifu/releases/latest"><img src="https://img.shields.io/badge/Download-Windows_installer-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download"></a>
+</p>
+
 ![Characters on the desktop](docs/images/hero.png)
 
 <p align="center">
@@ -34,8 +39,8 @@ listens to music with you and talks out loud. Her brain is Google Gemini, with a
 
 ## Download
 
-**[⬇ DesktopWaifu-Setup.exe](https://github.com/MeshanNawod/DesktopWaifu/releases/latest/download/DesktopWaifu-Setup.exe)**
-(Windows 10/11, no admin rights needed) · Website: **https://meshannawod.github.io/DesktopWaifu/**
+**[⬇ DesktopWaifu-Setup.exe](https://github.com/MeshanNawod/desktop-waifu/releases/latest/download/DesktopWaifu-Setup.exe)**
+(Windows 10/11, no admin rights needed) · Website: **https://meshannawod.github.io/desktop-waifu/**
 
 The installer isn't code-signed, so Windows SmartScreen may say "Windows protected your PC": click **More info → Run anyway**.
 
@@ -403,4 +408,4 @@ Installer built with [PyInstaller](https://pyinstaller.org) (GPL-2.0 with the bo
 - Hair and cloth springs follow the **VRM spring bone** design by the VRM Consortium.
 
 If you made something used here and the credit is missing or wrong, please
-[open an issue](https://github.com/MeshanNawod/DesktopWaifu/issues) and it will be fixed right away.
+[open an issue](https://github.com/MeshanNawod/desktop-waifu/issues) and it will be fixed right away.
